@@ -68,4 +68,33 @@
 
 ## 7. 验收证据
 
-见文末，阶段结束时填写。
+记录日期 2026-10-31，本机 macOS 24.6 arm64，uv 0.13.6，Node 24.21.0，Python 3.12.16。无 Docker，数据库为内嵌 PostgreSQL（D-001）。
+
+执行 `bash scripts/check.sh`，退出码 0，输出 `all checks passed`：
+
+| 步骤 | 结果 |
+| --- | --- |
+| secrets | 81 个文件，0 个问题 |
+| requirements mapping | 152 个 ID，152 行，0 个问题 |
+| ruff | All checks passed |
+| mypy | 25 个源文件，无问题 |
+| pytest（含迁移漂移检查） | 114 passed，10 skipped（Docling 用例），1 个 Starlette 弃用警告 |
+| web typecheck / build | 通过，Next.js 16.4.3 |
+
+| 标准 | 证据 | 状态 |
+| --- | --- | --- |
+| E1 | 2026-10-31 在 `git clone` 出的干净目录（已提交状态，加本次未提交的 README 与文档）里，依赖全新安装：`bash scripts/setup.sh` 退出码 0，约 10 秒（依赖由 uv 与 npm 缓存提供，没有测断网下载时间）；`bash scripts/dev.sh` 后 `/health/ready` 返回 200（database、migrations、storage、worker 均 ok），Web `/login` 返回 200；经 Web 代理注册、建项目、上传 `samples/pdfs/1706.03762.pdf`，返回 202，解析 `succeeded`，15 页。已停止服务并删除克隆 | 通过（限于本机、有包缓存） |
+| E2 | `test_foundation.py::test_e2_*`（缺失、格式错误、不可达三种，不输出密码） | 通过 |
+| E3 | `test_e3_doctor_flags_a_schema_that_has_not_been_migrated`；`test_e3_ready_returns_503_and_names_the_fix_when_not_migrated`（空库上 ready 为 503，migrations 项为 `schema is behind; run scripts/migrate.sh`，响应不含库名或连接串）；迁移漂移检查 `test_models_and_migrations_do_not_drift`。把迁移判断临时改成永不触发后 ready 用例失败，已还原 | 通过 |
+| E4 | `test_e4_ready_fails_without_a_worker_and_passes_with_one`；`test_e4_ready_reports_a_database_that_stops_after_startup`（另起临时 PostgreSQL，迁移后 ready 为 200，用 `pg_ctl` 真正停掉后为 503，database、migrations、worker 均 failed，响应不含路径或连接串）。把健康检查临时改成恒报 database ok 后该用例失败，已还原 | 通过 |
+| E5 | `test_secrets_check.py` 全部用例，加 `check_secrets.py` 对本仓库的扫描 | 通过 |
+| E6 | `test_e6_unhandled_error_is_generic_and_correlated` | 通过 |
+
+手动运行 `bash scripts/doctor.sh`（未启动 Worker）：database、migrations、storage 为 ok，worker 为 failed（no worker heartbeat），并给出启动命令；pdfium 可用，docling 为 not_configured。退出码 1，与 E4 的预期一致。
+
+**未完成，阶段 0 不能标完成**
+
+- 候选验证记录已落盘：`specs/spikes/2026-10-30-upstream-candidates.md` 与 `third_party.lock.yaml`。只有 Docling 实际运行过；PaperQA2、Presenton 只核对了版本与许可证，PaperAgent 无许可证。Docling 的冷启动、OCR、表格与公式质量未测，环境也没有安装脚本。适配器有自动化测试（`tests/test_docling_adapter.py`，10 个用例），但需要设置 `TEST_DOCLING_PYTHON`，否则跳过，`check.sh` 默认不带它。
+- 干净克隆重放只在本机做过，依赖有本地缓存；没有在另一台机器或断网缓存的环境验证。
+
+下一阶段入口：重新评估是否标完成（界面缺口见 001 第 7 节）。

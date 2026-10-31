@@ -216,4 +216,35 @@
 
 ## 7. 验收证据
 
-见文末，阶段结束时填写。
+记录日期 2026-10-31，环境同 [000-foundation.md](./000-foundation.md) 第 7 节。
+
+**后端**：`bash scripts/check.sh` 中 pytest 为 114 passed、10 skipped（跳过的是需要 `TEST_DOCLING_PYTHON` 的 Docling 用例）。**浏览器**：`backend/.venv/bin/python scripts/e2e.py`，退出码 0，Playwright 20 passed（45.8s；`reader.spec.ts` 15 个，新增 `management.spec.ts` 5 个），使用真实 PostgreSQL、API、Worker 和 Next.js 生产构建，无 mock。首次运行因缺 Chromium headless shell 全部失败，执行 `npm --prefix web exec -- playwright install chromium` 后通过。
+
+| 标准 | 证据 |
+| --- | --- |
+| A1–A9 | `test_auth_permissions.py` 中同名 `test_a1_` 到 `test_a9_` |
+| B1–B7 | `test_import.py` 中同名 `test_b1_` 到 `test_b7_` |
+| C1、C3 | `test_parsing.py::test_c1_*`（含 `test_c1_real_paper`，样例 `samples/pdfs/1706.03762.pdf`）、`test_c3_*`（corrupt、encrypted、scanned） |
+| C2 | `test_parsing.py::test_c2_bbox_matches_rendered_ink`，旋转 0/90/180/270，含裁剪框 |
+| C4–C9 | `test_jobs.py` 中同名 `test_c4_` 到 `test_c9_` |
+| C10 | `test_restart.py::test_c10_data_survives_restarting_everything` |
+| D1–D3 | `web/e2e/reader.spec.ts`：导入并阅读且刷新后仍在、块跳转与高亮、旋转与裁剪下高亮贴合墨迹（6 种）、解析失败显示真实错误、损坏与加密文件 |
+| 界面控件 | `web/e2e/management.spec.ts`：项目改名与目标、归档后只读且刷新仍保持、恢复；元数据保存并刷新后仍在、DOI 规范化、非法 DOI 被拒、同项目重复 DOI 显示 409 提示且不保存；上传新版本得到 v2（当前）、v1 仍可切换、重复文件被拒；成员添加（含未注册邮箱提示）、改角色后对方权限随之变化、移除后对方得到 not-found；最后一位所有者不能被移除或降级 |
+| 额外 | 上传被拒原因可见、非成员看到 not-found 且 viewer 无写入控件、会话过期回到登录页（均在 e2e 中通过） |
+
+**范围与限制**
+
+- 块级定位的样例只有一篇真实论文（Attention Is All You Need）。其余用例使用生成的 PDF。覆盖面窄，换一批版式不同的论文可能暴露问题。
+- 解析只用 pdfium，没有章节、表格、图表、公式结构，Docling 未接入（D-002）。
+- C4 到 C7 的测试用的是测试内的假解析进程来制造崩溃和超时，Worker 与租约逻辑是真实的。
+- 前端没有单元测试，只有上述 e2e。
+
+**未完成，P0.1 / P0.2 不能标完成**
+
+- 根 README 已补，并在本机干净克隆里重放通过（见 000 第 7 节 E1）；未在另一台机器验证。
+- 界面控件核对（读了 `web/src` 的页面代码，对照 2.3 节）：项目编辑与归档、成员增删与改角色、活动列表、上传、取消解析、重新解析、删除、元数据编辑（标题、作者、年份、DOI、arXiv ID，显示来源）、上传新版本，控件都存在。
+- 此前缺的浏览器用例已补（见上表「界面控件」），每个用例都在操作后刷新或换另一个用户重新读取，只改本地状态的控件过不了。把项目名输入框的 `disabled={archived}` 临时去掉后归档用例失败，已还原。
+- **仍没有浏览器用例：取消解析。** pdfium 解析 2000 页 PDF 只要约 0.1 秒，任务在能点按钮之前就已结束，界面无法稳定制造「排队中或解析中」的状态。取消的行为由 `test_jobs.py::test_c7_*` 在后端验证，按钮本身未经浏览器验证。要补，需要一个不被 Worker 领取的排队任务（例如不带 Worker 的另一套栈）。
+- 助手栏、笔记、批注属 P0.4/P0.5。
+
+下一步：取消解析按钮是已知缺口；其余缺口见上。是否把 P0.1/P0.2 标完成，仍待决定，状态保持「进行中」。

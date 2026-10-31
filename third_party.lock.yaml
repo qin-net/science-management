@@ -1,0 +1,61 @@
+# Pinned versions of upstream candidates. Details and evidence: specs/spikes/2026-10-30-upstream-candidates.md
+# `verified` lists only what was actually run in this repository; anything else is a candidate.
+# Last checked: 2026-10-31.
+
+docling:
+  status: optional-parser          # not the default; D-002
+  environment: separate virtualenv selected by DOCLING_PYTHON (about 1.3 GB), not created by any script yet
+  python: "3.12.16"
+  packages:
+    docling: {version: "2.145.0", license: MIT}
+    docling-core: {version: "2.105.0", license: MIT}
+    docling-ibm-models: {version: "4.0.4", license: MIT}
+    docling-parse: {version: "7.24.2", license: MIT}
+    torch: {version: "2.15.0", license: "Apache-2.0 AND BSD AND MIT AND others (package metadata)"}
+    rapidocr: {version: "3.10.0", license: not-checked}
+  models:
+    docling-project/docling-layout-heron:
+      revision: 8f39ad3c0b4c58e9c2d2c84a38465abf757272d8
+      license: apache-2.0
+    docling-project/docling-models:
+      revision: fc0f2d45e2218ea24bce5045f58a389aed16dc23   # local snapshot; the hub head was 2199320848bb on 2026-10-31
+      license: cdla-permissive-2.0
+    PaddlePaddle/PP-OCRv6_medium_det:
+      revision: 8e0f56fb2ef86b461d99cfc7ac5c137738985f61   # ref only, no weights in the local cache
+      license: apache-2.0                                  # reported by the Hugging Face API, model card not read
+    PaddlePaddle/PP-OCRv6_medium_rec:
+      revision: e5a92bcbc5cc1b494628e458d267778f0704fd7c   # same
+      license: apache-2.0
+    PaddlePaddle/PP-LCNet_x1_0_textline_ori:
+      revision: cd237a44b0e359d4fe38310a416203cf7403faa5   # same
+      license: apache-2.0
+  verified:
+    - real paper, OCR off, warm cache: SUCCESS, 15 pages, 4 tables, 7 pictures, 4.9 s
+    - block boxes match rendered ink within 0.004 on plain, cropped and rotated 90/180/270 pages
+  tests: "backend/tests/test_docling_adapter.py, 10 cases (8 bbox vs ink: 4 rotations x full/cropped page, plus real paper, plus corrupt PDF), skipped unless TEST_DOCLING_PYTHON is set"
+  not_verified:
+    - cold start time, OCR path, table and formula quality, comparison with pdfium blocks
+    - Docling environment setup is not scripted
+
+paper-qa:
+  status: candidate
+  version: "2026.8.12"            # PyPI, released 2026-08-12
+  license: Apache-2.0             # LICENSE file on main
+  requires_python: ">=3.11"
+  verified: []
+  not_verified: [install, answer quality, citation mapping to page and block ids, cost]
+
+paperagent:
+  repo: songhahaha66/PaperAgent
+  status: blocked
+  license: none                   # no LICENSE file on master or main, checked 2026-10-31; D-010
+  verified: []
+  note: not downloaded, not run, no code copied
+
+presenton:
+  repo: presenton/presenton
+  status: blocked
+  version: not-pinned             # GitHub API was rate limited when checked
+  license: Apache-2.0             # LICENSE file on main
+  verified: []
+  not_verified: [run (needs Docker, none on this machine), PPTX editability, Chinese text, overflow]

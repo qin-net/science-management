@@ -3,8 +3,11 @@
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -84,6 +87,99 @@ def test_e4_ready_fails_without_a_worker_and_passes_with_one():
     assert response.status_code == 200
     assert response.json()["status"] == "ready"
     assert response.json()["parsers"] == {"pdfium": "available", "docling": "not_configured"}
+
+
+READY_SCRIPT = """
+import json
+from fastapi.testclient import TestClient
+from researchos.main import app
+
+client = TestClient(app)
+response = client.get("/health/ready")
+print(json.dumps({"status": response.status_code, "body": response.json(), "text": response.text}))
+"""
+
+
+def test_e3_ready_returns_503_and_names_the_fix_when_not_migrated():
+    result = subprocess.run(
+        [sys.executable, "-c", READY_SCRIPT],
+        cwd=BACKEND_DIR,
+        env={**os.environ, "DATABASE_URL": _database_url(SERVER_URL, EMPTY_DB)},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    seen = json.loads(result.stdout.strip().splitlines()[-1])
+
+    assert seen["status"] == 503 and seen["body"]["status"] == "not_ready"
+    checks = seen["body"]["checks"]
+    assert checks["database"]["status"] == "ok"
+    assert checks["migrations"] == {
+        "status": "failed",
+        "detail": "schema is behind; run scripts/migrate.sh",
+    }
+    assert checks["worker"]["status"] == "failed"
+    assert EMPTY_DB not in seen["text"] and "postgresql" not in seen["text"]
+
+
+STOP_DATABASE_SCRIPT = """
+import json, subprocess, sys
+from fastapi.testclient import TestClient
+from researchos.main import app
+from researchos.worker import Worker
+
+pg_ctl, pgdata = sys.argv[1], sys.argv[2]
+client = TestClient(app)
+Worker().beat()
+before = client.get("/health/ready")
+subprocess.run([pg_ctl, "-D", pgdata, "-m", "fast", "stop"], check=True, capture_output=True)
+after = client.get("/health/ready")
+print(json.dumps({"before": [before.status_code, before.json()],
+                  "after": [after.status_code, after.json(), after.text]}))
+"""
+
+
+def test_e4_ready_reports_a_database_that_stops_after_startup():
+    """A dedicated server is migrated, seen healthy, then really stopped by pg_ctl. The shared
+    test server cannot be used because every other test depends on it."""
+    import pgserver
+    from pgserver import postgres_server
+
+    pgdata = Path(tempfile.mkdtemp(prefix="researchos-stop-"))
+    try:
+        server = pgserver.get_server(pgdata, cleanup_mode=None)
+        url = server.get_uri().replace("postgresql://", "postgresql+psycopg://", 1)
+        env = {**os.environ, "DATABASE_URL": url}
+        subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=BACKEND_DIR, env=env, check=True, capture_output=True, timeout=60,
+        )
+        pg_ctl = str(Path(postgres_server.POSTGRES_BIN_PATH) / "pg_ctl")
+        result = subprocess.run(
+            [sys.executable, "-c", STOP_DATABASE_SCRIPT, pg_ctl, str(pgdata)],
+            cwd=BACKEND_DIR, env=env, capture_output=True, text=True, timeout=60,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        seen = json.loads(result.stdout.strip().splitlines()[-1])
+    finally:
+        subprocess.run(
+            [str(Path(postgres_server.POSTGRES_BIN_PATH) / "pg_ctl"), "-D", str(pgdata),
+             "-m", "immediate", "stop"],
+            capture_output=True,
+        )
+        shutil.rmtree(pgdata, ignore_errors=True)
+
+    status, body = seen["before"]
+    assert status == 200 and body["status"] == "ready"
+
+    status, body, text = seen["after"]
+    assert status == 503 and body["status"] == "not_ready"
+    assert body["checks"]["database"]["status"] == "failed"
+    assert "database unreachable" in body["checks"]["database"]["detail"]
+    assert body["checks"]["migrations"]["status"] == "failed"
+    assert body["checks"]["worker"]["status"] == "failed"
+    assert str(pgdata) not in text and "postgresql" not in text
 
 
 def test_ready_response_holds_no_paths_or_urls():
