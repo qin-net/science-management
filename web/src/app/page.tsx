@@ -3,14 +3,25 @@
 import Link from "next/link";
 import { type FormEvent, useState } from "react";
 
+import {
+  Basis,
+  MyTasks,
+  ProjectCounts,
+  RecentEvents,
+  Totals,
+} from "@/components/Overview";
 import { ErrorNotice, formatTime, Header, Loading } from "@/components/ui";
 import { api, ApiFailure, sendJson } from "@/lib/api";
-import type { Project, Workspace } from "@/lib/types";
+import type { Overview, Project, Workspace } from "@/lib/types";
 import { useResource } from "@/lib/useResource";
 
 function Projects({ workspace }: { workspace: Workspace }) {
   const projects = useResource(
     () => api<Project[]>(`/workspaces/${workspace.id}/projects`),
+    workspace.id,
+  );
+  const overview = useResource(
+    () => api<Overview>(`/workspaces/${workspace.id}/overview`),
     workspace.id,
   );
   const [error, setError] = useState<ApiFailure | null>(null);
@@ -27,14 +38,27 @@ function Projects({ workspace }: { workspace: Workspace }) {
         goal: form.get("goal"),
       });
       target.reset();
-      await projects.reload();
+      await Promise.all([projects.reload(), overview.reload()]);
     } catch (failure) {
       setError(failure as ApiFailure);
     }
   }
 
+  const cards = new Map(overview.data?.projects.map((card) => [card.id, card]));
+
   return (
     <>
+      {overview.error && (
+        <ErrorNotice error={overview.error} onRetry={overview.reload} />
+      )}
+      {overview.data && (
+        <>
+          {overview.data.projects.length > 0 && <Totals data={overview.data} />}
+          <MyTasks data={overview.data} />
+          <RecentEvents data={overview.data} />
+          <Basis today={overview.data.today} />
+        </>
+      )}
       {canWrite && (
         <section className="panel">
           <h2>新建研究项目</h2>
@@ -57,7 +81,9 @@ function Projects({ workspace }: { workspace: Workspace }) {
       <section className="panel">
         <h2>项目</h2>
         {projects.loading && <Loading />}
-        {projects.error && <ErrorNotice error={projects.error} onRetry={projects.reload} />}
+        {projects.error && (
+          <ErrorNotice error={projects.error} onRetry={projects.reload} />
+        )}
         {projects.data?.length === 0 && (
           <div className="empty">
             {canWrite ? "还没有项目，先创建一个吧。" : "这个工作区还没有项目。"}
@@ -68,10 +94,15 @@ function Projects({ workspace }: { workspace: Workspace }) {
             <li className="list-item" key={project.id}>
               <div className="row-between">
                 <Link href={`/projects/${project.id}`}>{project.name}</Link>
-                {project.status === "archived" && <span className="badge cancelled">已归档</span>}
+                {project.status === "archived" && (
+                  <span className="badge cancelled">已归档</span>
+                )}
               </div>
               {project.goal && <span className="muted">{project.goal}</span>}
-              <span className="muted small">更新于 {formatTime(project.updated_at)}</span>
+              <ProjectCounts project={cards.get(project.id)} />
+              <span className="muted small">
+                更新于 {formatTime(project.updated_at)}
+              </span>
             </li>
           ))}
         </ul>
@@ -81,10 +112,15 @@ function Projects({ workspace }: { workspace: Workspace }) {
 }
 
 export default function HomePage() {
-  const workspaces = useResource(() => api<Workspace[]>("/workspaces"), "workspaces");
+  const workspaces = useResource(
+    () => api<Workspace[]>("/workspaces"),
+    "workspaces",
+  );
   const [selected, setSelected] = useState<string | null>(null);
   const workspace =
-    workspaces.data?.find((item) => item.id === selected) ?? workspaces.data?.[0] ?? null;
+    workspaces.data?.find((item) => item.id === selected) ??
+    workspaces.data?.[0] ??
+    null;
 
   return (
     <>
@@ -105,7 +141,9 @@ export default function HomePage() {
       </Header>
       <main className="page">
         {workspaces.loading && <Loading />}
-        {workspaces.error && <ErrorNotice error={workspaces.error} onRetry={workspaces.reload} />}
+        {workspaces.error && (
+          <ErrorNotice error={workspaces.error} onRetry={workspaces.reload} />
+        )}
         {workspace && (
           <>
             <h1>{workspace.name}</h1>

@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { type ChangeEvent, type FormEvent, useState } from "react";
 
+import { LiteratureSearch } from "@/components/LiteratureSearch";
+import { Notes } from "@/components/Notes";
+import { Tasks } from "@/components/Tasks";
 import {
   ErrorNotice,
   formatBytes,
@@ -15,6 +18,7 @@ import {
   Loading,
 } from "@/components/ui";
 import { api, ApiFailure, sendJson, uploadPdf } from "@/lib/api";
+import { EVENT_LABELS } from "@/lib/events";
 import type {
   Member,
   Paper,
@@ -31,18 +35,6 @@ const ROLE_LABELS: Record<Role, string> = {
   admin: "管理员",
   member: "成员",
   viewer: "只读",
-};
-
-const EVENT_LABELS: Record<string, string> = {
-  "project.created": "创建项目",
-  "project.updated": "修改项目",
-  "paper.imported": "导入文献",
-  "paper.parse_queued": "解析排队",
-  "paper.parsed": "解析成功",
-  "paper.parse_failed": "解析失败",
-  "paper.parse_cancelled": "解析已取消",
-  "paper.metadata_updated": "修改文献信息",
-  "paper.deleted": "删除文献",
 };
 
 type UploadResult = { name: string; error?: ApiFailure };
@@ -78,7 +70,13 @@ function PaperRow({
         <Link href={`/projects/${projectId}/papers/${paper.id}`}>
           {paper.title ?? <span>（标题未知）</span>}
         </Link>
-        <JobBadge job={job} />
+        {version ? (
+          <JobBadge job={job} />
+        ) : (
+          <span className="badge queued" data-testid="no-pdf">
+            无 PDF
+          </span>
+        )}
       </div>
       {paper.authors.length > 0 && <span className="muted">{paper.authors.join("，")}</span>}
       {version && (
@@ -117,7 +115,7 @@ function PaperRow({
             <button
               className="danger"
               onClick={() => {
-                if (window.confirm("删除这篇文献及其全部版本？此操作不可恢复。")) {
+                if (window.confirm("删除这篇文献及其全部版本？同时删除这篇文献的笔记；关联的任务会保留，只是不再指向这篇文献。此操作不可恢复。")) {
                   void run(() => sendJson(`/projects/${projectId}/papers/${paper.id}`, "DELETE"));
                 }
               }}
@@ -132,7 +130,15 @@ function PaperRow({
   );
 }
 
-function Papers({ project, canWrite }: { project: Project; canWrite: boolean }) {
+function Papers({
+  project,
+  canWrite,
+  onPapersChanged,
+}: {
+  project: Project;
+  canWrite: boolean;
+  onPapersChanged: () => void;
+}) {
   const papers = useResource(
     () => api<PapersPage>(`/projects/${project.id}/papers?limit=200`),
     project.id,
@@ -158,11 +164,22 @@ function Papers({ project, canWrite }: { project: Project; canWrite: boolean }) 
       }
       setResults([...outcome]);
       await papers.reload();
+      onPapersChanged();
     }
     setUploading(null);
   }
 
   return (
+    <>
+    {writable && (
+      <LiteratureSearch
+        projectId={project.id}
+        onImported={async () => {
+          await papers.reload();
+          onPapersChanged();
+        }}
+      />
+    )}
     <section className="panel">
       <div className="row-between">
         <h2>文献{papers.data ? `（${papers.data.total}）` : ""}</h2>
@@ -208,11 +225,15 @@ function Papers({ project, canWrite }: { project: Project; canWrite: boolean }) 
             paper={paper}
             projectId={project.id}
             canWrite={writable}
-            onChanged={papers.reload}
+            onChanged={async () => {
+              await papers.reload();
+              onPapersChanged();
+            }}
           />
         ))}
       </ul>
     </section>
+    </>
   );
 }
 
@@ -422,6 +443,7 @@ export default function ProjectPage() {
   const workspaces = useResource(() => api<Workspace[]>("/workspaces"), "workspaces");
   const workspace = workspaces.data?.find((item) => item.id === project.data?.workspace_id);
   const canWrite = workspace !== undefined && workspace.role !== "viewer";
+  const [notesRefresh, setNotesRefresh] = useState(0);
 
   return (
     <>
@@ -445,7 +467,24 @@ export default function ProjectPage() {
             </div>
             <div className="grid-2">
               <div className="stack">
-                <Papers project={project.data} canWrite={canWrite} />
+                <Papers
+                  project={project.data}
+                  canWrite={canWrite}
+                  onPapersChanged={() => setNotesRefresh((value) => value + 1)}
+                />
+                <Tasks
+                  projectId={project.data.id}
+                  workspaceId={project.data.workspace_id}
+                  canWrite={canWrite && project.data.status === "active"}
+                  refresh={notesRefresh}
+                />
+                <section className="panel">
+                  <Notes
+                    projectId={project.data.id}
+                    canWrite={canWrite && project.data.status === "active"}
+                    refresh={notesRefresh}
+                  />
+                </section>
                 <Activity project={project.data} />
               </div>
               <div className="stack">

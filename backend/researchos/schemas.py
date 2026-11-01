@@ -1,9 +1,10 @@
 """Request/response models. Unknown fields are rejected so silent typos surface as 422."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class Strict(BaseModel):
@@ -130,6 +131,9 @@ class PaperOut(BaseModel):
     year: int | None
     doi: str | None
     arxiv_id: str | None
+    abstract: str | None
+    venue: str | None
+    source_links: dict | None
     metadata_provenance: dict
     current_version: VersionOut | None
     parse_job: JobOut | None
@@ -173,3 +177,249 @@ class EventOut(Out):
     created_at: datetime
     project_id: uuid.UUID | None
     actor_id: uuid.UUID | None
+
+
+class SearchIn(Strict):
+    query: str = Field(min_length=1, max_length=300)
+    sources: list[str] | None = None
+    year_from: int | None = Field(default=None, ge=1500)
+    year_to: int | None = Field(default=None, ge=1500)
+    limit: int = Field(default=20, ge=1, le=25)
+
+
+class ImportIn(Strict):
+    doi: str | None = Field(default=None, max_length=255)
+    arxiv_id: str | None = Field(default=None, max_length=200)
+
+
+NOTE_MAX_CHARS = 20000
+
+
+def _clean_note_body(value: str) -> str:
+    value = value.strip()
+    if len(value) > NOTE_MAX_CHARS:
+        raise ValueError(f"the note is longer than {NOTE_MAX_CHARS} characters")
+    if any(ord(c) < 32 and c not in "\n\t" or ord(c) == 127 for c in value):
+        raise ValueError("the note contains control characters")
+    return value
+
+
+class NoteAnchorIn(Strict):
+    version_id: uuid.UUID
+    block_id: uuid.UUID
+
+
+class NoteCreate(Strict):
+    body: str
+    paper_id: uuid.UUID | None = None
+    anchor: NoteAnchorIn | None = None
+
+    @field_validator("body")
+    @classmethod
+    def _body(cls, value: str) -> str:
+        return _clean_note_body(value)
+
+
+class NotePatch(Strict):
+    body: str
+    expected_version: int = Field(ge=1)
+
+    @field_validator("body")
+    @classmethod
+    def _body(cls, value: str) -> str:
+        return _clean_note_body(value)
+
+
+class NoteAnchorOut(BaseModel):
+    version_id: uuid.UUID
+    version_no: int
+    page_no: int
+    text: str
+    status: str  # located | stale | unparsed
+    block_id: uuid.UUID | None
+    bbox: list[float] | None
+    granularity: str
+
+
+class NoteOut(BaseModel):
+    id: uuid.UUID
+    kind: str  # project | paper | annotation
+    paper_id: uuid.UUID | None
+    paper_title: str | None
+    author_id: uuid.UUID
+    author_name: str
+    body: str
+    version: int
+    editable: bool
+    deletable: bool
+    anchor: NoteAnchorOut | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class NotesPage(BaseModel):
+    items: list[NoteOut]
+    total: int
+    offset: int
+    limit: int
+
+
+TaskStatus = Literal["todo", "doing", "blocked", "done", "cancelled"]
+TaskPriority = Literal["low", "normal", "high"]
+
+
+def _plain_text(value: str, *, limit: int, field: str) -> str:
+    value = value.strip()
+    if len(value) > limit:
+        raise ValueError(f"{field} is longer than {limit} characters")
+    if any(ord(c) < 32 and c not in "\n\t" or ord(c) == 127 for c in value):
+        raise ValueError(f"{field} contains control characters")
+    return value
+
+
+def _title(value: str) -> str:
+    value = _plain_text(value, limit=200, field="the title")
+    if not value:
+        raise ValueError("the title is empty")
+    return value
+
+
+def _reason(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return _plain_text(value, limit=500, field="the reason") or None
+
+
+class TaskCreate(Strict):
+    title: str
+    description: str = ""
+    status: Literal["todo", "doing", "blocked"] = "todo"
+    priority: TaskPriority = "normal"
+    blocked_reason: str | None = None
+    assignee_id: uuid.UUID | None = None
+    due_date: date | None = None
+    paper_id: uuid.UUID | None = None
+
+    _title_ok = field_validator("title")(lambda cls, v: _title(v))
+    _description_ok = field_validator("description")(
+        lambda cls, v: _plain_text(v, limit=5000, field="the description")
+    )
+    _reason_ok = field_validator("blocked_reason")(lambda cls, v: _reason(v))
+
+
+class TaskPatch(Strict):
+    expected_version: int = Field(ge=1)
+    title: str | None = None
+    description: str | None = None
+    status: TaskStatus | None = None
+    priority: TaskPriority | None = None
+    blocked_reason: str | None = None
+    assignee_id: uuid.UUID | None = None
+    due_date: date | None = None
+    paper_id: uuid.UUID | None = None
+
+    @field_validator("title")
+    @classmethod
+    def _title_ok(cls, v: str | None) -> str | None:
+        if v is None:
+            raise ValueError("the title cannot be cleared")
+        return _title(v)
+
+    @field_validator("description")
+    @classmethod
+    def _description_ok(cls, v: str | None) -> str | None:
+        if v is None:
+            raise ValueError("the description cannot be cleared; send an empty string")
+        return _plain_text(v, limit=5000, field="the description")
+
+    @field_validator("status", "priority")
+    @classmethod
+    def _not_null(cls, v: str | None) -> str | None:
+        if v is None:
+            raise ValueError("this field cannot be cleared")
+        return v
+
+    _reason_ok = field_validator("blocked_reason")(lambda cls, v: _reason(v))
+
+
+class TaskOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    description: str
+    status: str
+    priority: str
+    blocked_reason: str | None
+    assignee_id: uuid.UUID | None
+    assignee_name: str | None
+    assignee_active: bool | None
+    due_date: date | None
+    overdue: bool
+    paper_id: uuid.UUID | None
+    paper_title: str | None
+    created_by: uuid.UUID
+    created_by_name: str
+    completed_at: datetime | None
+    version: int
+    editable: bool
+    deletable: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class TasksPage(BaseModel):
+    items: list[TaskOut]
+    total: int
+    offset: int
+    limit: int
+    counts: dict[str, int]
+
+
+class OverviewTotals(BaseModel):
+    active_projects: int
+    archived_projects: int
+    papers: int
+    open_tasks: int
+    overdue_tasks: int
+
+
+class OverviewProject(BaseModel):
+    id: uuid.UUID
+    name: str
+    status: str
+    paper_count: int
+    parsed_paper_count: int
+    tasks: dict[str, int]
+    last_activity_at: datetime | None
+
+
+class OverviewTask(BaseModel):
+    id: uuid.UUID
+    title: str
+    status: str
+    priority: str
+    due_date: date | None
+    overdue: bool
+    project_id: uuid.UUID
+    project_name: str
+
+
+class OverviewMyTasks(BaseModel):
+    total: int
+    items: list[OverviewTask]
+
+
+class OverviewEvent(BaseModel):
+    id: uuid.UUID
+    event_type: str
+    project_id: uuid.UUID | None
+    project_name: str | None
+    actor_name: str | None
+    created_at: datetime
+
+
+class Overview(BaseModel):
+    today: date
+    totals: OverviewTotals
+    projects: list[OverviewProject]
+    my_tasks: OverviewMyTasks
+    recent_events: list[OverviewEvent]

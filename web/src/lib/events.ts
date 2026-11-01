@@ -1,0 +1,17 @@
+export const EVENT_LABELS: Record<string, string> = {
+  "project.created": "创建项目",
+  "project.updated": "修改项目",
+  "paper.imported": "导入文献",
+  "paper.parse_queued": "解析排队",
+  "paper.parsed": "解析成功",
+  "paper.parse_failed": "解析失败",
+  "paper.parse_cancelled": "解析已取消",
+  "paper.metadata_updated": "修改文献信息",
+  "paper.deleted": "删除文献",
+  "note.created": "新建笔记",
+  "note.updated": "修改笔记",
+  "note.deleted": "删除笔记",
+  "task.created": "新建任务",
+  "task.updated": "修改任务",
+  "task.deleted": "删除任务",
+};

@@ -13,9 +13,7 @@ from researchos.parsers.registry import parser_commands
 PARSE_KIND = "paper.parse"
 
 
-def enqueue_parse(
-    db: Session, version: PaperVersion, user: User, parser: str | None = None
-) -> Job:
+def enqueue_parse(db: Session, version: PaperVersion, user: User, parser: str | None = None) -> Job:
     settings = get_settings()
     parser = parser or settings.parser_default
     if parser not in parser_commands():

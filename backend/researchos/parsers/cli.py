@@ -20,9 +20,7 @@ def main(argv: list[str]) -> int:
     try:
         payload = {"result": PARSERS[name](pdf_path).to_dict()}
     except ParseError as exc:
-        payload = {
-            "error": {"code": exc.code, "message": exc.message, "retryable": exc.retryable}
-        }
+        payload = {"error": {"code": exc.code, "message": exc.message, "retryable": exc.retryable}}
     Path(out_path).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     return 0
 

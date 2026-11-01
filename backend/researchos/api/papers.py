@@ -1,6 +1,5 @@
 """PDF import, versions, located blocks and parse-job control."""
 
-import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -18,12 +17,15 @@ from researchos.config import get_settings
 from researchos.db import get_db
 from researchos.errors import ApiError, not_found
 from researchos.jobs import PARSE_KIND, enqueue_parse
+from researchos.literature.ids import normalize_arxiv_id, normalize_doi
 from researchos.models import (
     ACTIVE_JOB_STATUSES,
     Job,
+    Note,
     Paper,
     PaperBlock,
     PaperVersion,
+    Task,
     User,
     WorkerHeartbeat,
 )
@@ -40,8 +42,6 @@ from researchos.security import current_user, require_project, require_writable_
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["papers"])
 
-DOI_RE = re.compile(r"^10\.\d{4,9}/\S+$")
-DOI_PREFIX_RE = re.compile(r"^(https?://(dx\.)?doi\.org/|doi:\s*)", re.I)
 STATUSES = "^(queued|running|succeeded|failed|cancelled)$"
 
 
@@ -68,6 +68,9 @@ def _paper_out(db: Session, paper: Paper) -> PaperOut:
         year=paper.year,
         doi=paper.doi,
         arxiv_id=paper.arxiv_id,
+        abstract=paper.abstract,
+        venue=paper.venue,
+        source_links=paper.source_links,
         metadata_provenance=paper.metadata_provenance,
         current_version=VersionOut.model_validate(version) if version else None,
         parse_job=JobOut.model_validate(job) if job else None,
@@ -336,10 +339,19 @@ def get_paper(
 def _normalize_doi(raw: str | None) -> str | None:
     if raw is None or not raw.strip():
         return None
-    doi = DOI_PREFIX_RE.sub("", raw.strip()).lower()
-    if not DOI_RE.match(doi):
+    doi = normalize_doi(raw)
+    if doi is None:
         raise ApiError(422, "invalid_doi", "DOI must look like 10.1234/abc")
     return doi
+
+
+def _normalize_arxiv(raw: str | None) -> str | None:
+    if raw is None or not raw.strip():
+        return None
+    arxiv_id = normalize_arxiv_id(raw)
+    if arxiv_id is None:
+        raise ApiError(422, "invalid_arxiv_id", "arXiv ID must look like 1706.03762")
+    return arxiv_id
 
 
 @router.patch("/papers/{paper_id}", response_model=PaperOut)
@@ -357,9 +369,10 @@ def patch_paper(
         changes["doi"] = _normalize_doi(changes["doi"])
     if "authors" in changes:
         changes["authors"] = [a.strip() for a in changes["authors"] or [] if a.strip()]
-    for field in ("title", "arxiv_id"):
-        if field in changes:
-            changes[field] = (changes[field] or "").strip() or None
+    if "arxiv_id" in changes:
+        changes["arxiv_id"] = _normalize_arxiv(changes["arxiv_id"])
+    if "title" in changes:
+        changes["title"] = (changes["title"] or "").strip() or None
     provenance = dict(paper.metadata_provenance)
     for field, value in changes.items():
         setattr(paper, field, value)
@@ -379,14 +392,32 @@ def patch_paper(
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        existing = db.scalar(
-            select(Paper.id).where(Paper.project_id == project_id, Paper.doi == changes.get("doi"))
+        # Two unique indexes can fire; look at the values rather than parse the driver message.
+        doi, arxiv_id = changes.get("doi"), changes.get("arxiv_id")
+        by_doi = (
+            db.scalar(select(Paper.id).where(Paper.project_id == project_id, Paper.doi == doi))
+            if doi
+            else None
+        )
+        if by_doi is not None and by_doi != paper_id:
+            raise ApiError(
+                409,
+                "duplicate_doi",
+                "another paper in this project has this DOI",
+                {"paper_id": str(by_doi)},
+            ) from exc
+        by_arxiv = (
+            db.scalar(
+                select(Paper.id).where(Paper.project_id == project_id, Paper.arxiv_id == arxiv_id)
+            )
+            if arxiv_id
+            else None
         )
         raise ApiError(
             409,
-            "duplicate_doi",
-            "another paper in this project has this DOI",
-            {"paper_id": str(existing)} if existing else {},
+            "duplicate_arxiv_id",
+            "another paper in this project has this arXiv ID",
+            {"paper_id": str(by_arxiv)} if by_arxiv else {},
         ) from exc
     return _paper_out(db, paper)
 
@@ -410,6 +441,13 @@ def delete_paper(
     if active:
         raise ApiError(409, "job_active", "cancel the running parse before deleting this paper")
     keys = [version.storage_key for version in versions]
+    # Annotations point at versions that are about to go, so the paper's notes go with it.
+    # Tasks outlive the paper they pointed at; only the link goes.
+    unlink = update(Task).where(Task.paper_id == paper.id).values(paper_id=None)
+    task_count = len(list(db.scalars(unlink.returning(Task.id))))
+    note_count = len(
+        list(db.scalars(delete(Note).where(Note.paper_id == paper.id).returning(Note.id)))
+    )
     db.execute(delete(PaperBlock).where(PaperBlock.paper_version_id.in_(version_ids)))
     paper.current_version_id = None
     db.execute(
@@ -428,7 +466,12 @@ def delete_paper(
         workspace_id=paper.workspace_id,
         project_id=paper.project_id,
         actor_id=user.id,
-        payload={"title": paper.title, "versions": len(versions)},
+        payload={
+            "title": paper.title,
+            "versions": len(versions),
+            "note_count": note_count,
+            "task_count": task_count,
+        },
     )
     db.delete(paper)
     db.commit()

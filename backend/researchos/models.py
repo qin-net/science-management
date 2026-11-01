@@ -1,13 +1,15 @@
 """SQLAlchemy models for the P0 slice. See specs/001-p0-workspace-paper-import.md."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -86,9 +88,7 @@ class WorkspaceMember(Base):
 
 class Project(Base):
     __tablename__ = "projects"
-    __table_args__ = (
-        CheckConstraint("status in ('active','archived')", name="ck_project_status"),
-    )
+    __table_args__ = (CheckConstraint("status in ('active','archived')", name="ck_project_status"),)
 
     id: Mapped[uuid.UUID] = uuid_pk()
     workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id"), index=True)
@@ -112,6 +112,13 @@ class Paper(Base):
             unique=True,
             postgresql_where=text("doi IS NOT NULL"),
         ),
+        Index(
+            "uq_papers_project_arxiv",
+            "project_id",
+            "arxiv_id",
+            unique=True,
+            postgresql_where=text("arxiv_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
@@ -122,7 +129,12 @@ class Paper(Base):
     year: Mapped[int | None] = mapped_column(Integer)
     doi: Mapped[str | None] = mapped_column(String(255))
     arxiv_id: Mapped[str | None] = mapped_column(String(64))
-    # Per-field origin ("user" / "pdf_metadata"); a missing key means the value is unknown.
+    abstract: Mapped[str | None] = mapped_column(Text)
+    venue: Mapped[str | None] = mapped_column(Text)
+    # {"open_access_url", "landing_url"} from the source that supplied the record.
+    source_links: Mapped[dict | None] = mapped_column(JSONB)
+    # Per-field origin: user, pdf_metadata, arxiv, openalex or crossref. A missing key means
+    # the value is unknown.
     metadata_provenance: Mapped[dict] = mapped_column(JSONB, default=dict)
     current_version_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("paper_versions.id", use_alter=True, name="fk_papers_current_version")
@@ -232,6 +244,83 @@ class PaperBlock(Base):
     content_hash: Mapped[str] = mapped_column(String(71))
 
 
+class Note(Base):
+    """A project note, a paper note, or an annotation anchored to a block (specs/003).
+
+    `anchor` is a snapshot the server took from the block when the note was created. It is never
+    edited; where the text sits now is worked out on read.
+    """
+
+    __tablename__ = "notes"
+    __table_args__ = (
+        CheckConstraint("char_length(body) <= 20000", name="ck_note_body_length"),
+        CheckConstraint("anchor IS NULL OR version_id IS NOT NULL", name="ck_note_anchor_version"),
+        CheckConstraint("version_id IS NULL OR paper_id IS NOT NULL", name="ck_note_version_paper"),
+        CheckConstraint(
+            "anchor IS NOT NULL OR char_length(body) >= 1", name="ck_note_body_present"
+        ),
+        Index("ix_notes_project_paper_time", "project_id", "paper_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    paper_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("papers.id"))
+    version_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("paper_versions.id"))
+    author_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    body: Mapped[str] = mapped_column(Text)
+    # {page_no, text, content_hash, bbox, granularity, block_seq}; SQL NULL when not anchored.
+    anchor: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = timestamp()
+    updated_at: Mapped[datetime] = timestamp(onupdate=utcnow)
+
+
+TASK_STATUSES = ("todo", "doing", "blocked", "done", "cancelled")
+TASK_PRIORITIES = ("low", "normal", "high")
+OPEN_TASK_STATUSES = ("todo", "doing", "blocked")
+
+
+class Task(Base):
+    """A project task (specs/004). The rules about blocked and done live in CHECKs as well as in
+    the API, so a bug in either cannot store a blocked task nobody can explain."""
+
+    __tablename__ = "tasks"
+    __table_args__ = (
+        CheckConstraint(
+            "status in ('todo','doing','blocked','done','cancelled')", name="ck_task_status"
+        ),
+        CheckConstraint("priority in ('low','normal','high')", name="ck_task_priority"),
+        CheckConstraint("char_length(title) between 1 and 200", name="ck_task_title_length"),
+        CheckConstraint("char_length(description) <= 5000", name="ck_task_description_length"),
+        CheckConstraint(
+            "(status = 'blocked') = (blocked_reason IS NOT NULL AND char_length(blocked_reason) "
+            "between 1 and 500)",
+            name="ck_task_blocked_reason",
+        ),
+        CheckConstraint("(status = 'done') = (completed_at IS NOT NULL)", name="ck_task_completed"),
+        Index("ix_tasks_project_status", "project_id", "status"),
+        Index("ix_tasks_project_assignee", "project_id", "assignee_id"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    title: Mapped[str] = mapped_column(Text)
+    description: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="todo")
+    priority: Mapped[str] = mapped_column(String(8), default="normal")
+    blocked_reason: Mapped[str | None] = mapped_column(Text)
+    assignee_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    due_date: Mapped[date | None] = mapped_column(Date)
+    paper_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("papers.id"))
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = timestamp()
+    updated_at: Mapped[datetime] = timestamp(onupdate=utcnow)
+
+
 class ResearchEvent(Base):
     """Append-only activity log; written in the same transaction as the change it records."""
 
@@ -256,3 +345,44 @@ class WorkerHeartbeat(Base):
     parsers: Mapped[list[str]] = mapped_column(JSONB, default=list)
     started_at: Mapped[datetime] = timestamp()
     last_seen_at: Mapped[datetime] = timestamp()
+
+
+class SourceState(Base):
+    """Shared by every API process: pacing, cooldowns and quota of one literature source."""
+
+    __tablename__ = "source_state"
+
+    source: Mapped[str] = mapped_column(String(32), primary_key=True)
+    next_allowed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cooldown_reason: Mapped[str | None] = mapped_column(String(32))
+    quota_remaining_usd: Mapped[float | None] = mapped_column(Float)
+    quota_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cost_usd: Mapped[float | None] = mapped_column(Float)
+    interval_seconds: Mapped[float | None] = mapped_column(Float)
+    updated_at: Mapped[datetime] = timestamp(onupdate=utcnow)
+
+
+class SearchCache(Base):
+    """Normalized public metadata from the sources. Holds nothing about users or projects."""
+
+    __tablename__ = "search_cache"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source: Mapped[str] = mapped_column(String(32))
+    payload: Mapped[dict] = mapped_column(JSONB)
+    total: Mapped[int | None] = mapped_column(Integer)
+    fetched_at: Mapped[datetime] = timestamp()
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class SearchCall(Base):
+    """Per-user rate limit ledger. Deliberately stores no query text."""
+
+    __tablename__ = "search_calls"
+    __table_args__ = (Index("ix_search_calls_user_created", "user_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = timestamp()
+    sources: Mapped[list] = mapped_column(JSONB, default=list)

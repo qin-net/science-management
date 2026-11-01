@@ -153,19 +153,33 @@ def test_e4_ready_reports_a_database_that_stops_after_startup():
         env = {**os.environ, "DATABASE_URL": url}
         subprocess.run(
             [sys.executable, "-m", "alembic", "upgrade", "head"],
-            cwd=BACKEND_DIR, env=env, check=True, capture_output=True, timeout=60,
+            cwd=BACKEND_DIR,
+            env=env,
+            check=True,
+            capture_output=True,
+            timeout=60,
         )
         pg_ctl = str(Path(postgres_server.POSTGRES_BIN_PATH) / "pg_ctl")
         result = subprocess.run(
             [sys.executable, "-c", STOP_DATABASE_SCRIPT, pg_ctl, str(pgdata)],
-            cwd=BACKEND_DIR, env=env, capture_output=True, text=True, timeout=60,
+            cwd=BACKEND_DIR,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         assert result.returncode == 0, result.stdout + result.stderr
         seen = json.loads(result.stdout.strip().splitlines()[-1])
     finally:
         subprocess.run(
-            [str(Path(postgres_server.POSTGRES_BIN_PATH) / "pg_ctl"), "-D", str(pgdata),
-             "-m", "immediate", "stop"],
+            [
+                str(Path(postgres_server.POSTGRES_BIN_PATH) / "pg_ctl"),
+                "-D",
+                str(pgdata),
+                "-m",
+                "immediate",
+                "stop",
+            ],
             capture_output=True,
         )
         shutil.rmtree(pgdata, ignore_errors=True)

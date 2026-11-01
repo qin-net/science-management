@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import { type ChangeEvent, type FormEvent, useMemo, useState } from "react";
 
+import { Notes } from "@/components/Notes";
 import { PdfView } from "@/components/PdfView";
 import {
   ErrorNotice,
@@ -15,7 +16,7 @@ import {
   Loading,
 } from "@/components/ui";
 import { api, ApiFailure, sendJson, uploadPdf } from "@/lib/api";
-import type { Block, BlocksPage, Paper, Project, Version, Workspace } from "@/lib/types";
+import type { Block, BlocksPage, Note, Paper, Project, Version, Workspace } from "@/lib/types";
 import { useResource } from "@/lib/useResource";
 
 const BLOCK_PAGE_SIZE = 2000;
@@ -160,8 +161,13 @@ function MetadataForm({
   }
 
   const source = (field: string) =>
-    ({ user: "手动填写", pdf_metadata: "来自 PDF 内嵌信息" })[paper.metadata_provenance[field]] ??
-    "未知";
+    ({
+      user: "手动填写",
+      pdf_metadata: "来自 PDF 内嵌信息",
+      arxiv: "来自 arXiv",
+      openalex: "来自 OpenAlex",
+      crossref: "来自 Crossref",
+    })[paper.metadata_provenance[field]] ?? "未知";
 
   return (
     <form className="meta-table" onSubmit={submit} key={JSON.stringify(paper.metadata_provenance)}>
@@ -202,6 +208,7 @@ function Versions({
   disabled,
   onSelect,
   onUploaded,
+  uploadLabel = "上传新版本",
 }: {
   base: string;
   paper: Paper;
@@ -209,6 +216,7 @@ function Versions({
   disabled: boolean;
   onSelect: (version: Version) => void;
   onUploaded: () => Promise<void>;
+  uploadLabel?: string;
 }) {
   const versions = useResource(
     () => api<Version[]>(`${base}/versions`),
@@ -255,11 +263,99 @@ function Versions({
       {error && <ErrorNotice error={error} />}
       {!disabled && (
         <label>
-          上传新版本
+          {uploadLabel}
           <input type="file" accept="application/pdf" onChange={choose} />
         </label>
       )}
     </div>
+  );
+}
+
+function externalLink(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function NoPdfView({
+  paper,
+  base,
+  projectId,
+  projectName,
+  readOnly,
+  onChanged,
+}: {
+  paper: Paper;
+  base: string;
+  projectId: string;
+  projectName: string;
+  readOnly: boolean;
+  onChanged: () => Promise<void>;
+}) {
+  const links = [
+    ["开放获取链接", externalLink(paper.source_links?.open_access_url)],
+    ["来源页面", externalLink(paper.source_links?.landing_url)],
+  ] as const;
+  return (
+    <>
+      <Header>
+        <a href={`/projects/${projectId}`}>{projectName}</a>
+      </Header>
+      <main className="page" data-testid="no-pdf-page">
+        <h1>{paper.title ?? "（标题未知）"}</h1>
+        <div className="notice info">
+          <strong>这篇文献还没有 PDF</strong>
+          <span className="muted small">
+            只导入了元数据，没有阅读器和文本块。上传 PDF 后会成为 v1 并开始解析。
+          </span>
+        </div>
+        <div className="grid-2">
+          <section className="panel">
+            <h2>摘要</h2>
+            {paper.abstract ? (
+              <p data-testid="paper-abstract">{paper.abstract}</p>
+            ) : (
+              <p className="muted">摘要未知</p>
+            )}
+            <p className="muted small" data-testid="paper-venue">
+              {paper.venue ?? "期刊/会议未知"}
+            </p>
+            <div className="row">
+              {links.map(
+                ([label, href]) =>
+                  href && (
+                    <a key={label} href={href} target="_blank" rel="noopener noreferrer">
+                      {label}
+                    </a>
+                  ),
+              )}
+            </div>
+          </section>
+          <section className="panel">
+            <h2>文献信息</h2>
+            <MetadataForm paper={paper} base={base} disabled={readOnly} onSaved={onChanged} />
+            <Versions
+              base={base}
+              paper={paper}
+              selected={null}
+              disabled={readOnly}
+              onSelect={() => undefined}
+              onUploaded={onChanged}
+              uploadLabel="上传 PDF"
+            />
+          </section>
+        </div>
+        <section className="panel">
+          <Notes projectId={projectId} paperId={paper.id} canWrite={!readOnly} />
+        </section>
+      </main>
+    </>
   );
 }
 
@@ -273,6 +369,10 @@ export default function ReaderPage() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Block | null>(null);
   const [actionError, setActionError] = useState<ApiFailure | null>(null);
+  const versions = useResource(
+    () => api<Version[]>(`${base}/versions`),
+    `${base}:${paper.data?.current_version?.id ?? "none"}`,
+  );
 
   const role = workspaces.data?.find((item) => item.id === project.data?.workspace_id)?.role;
   const readOnly = !role || role === "viewer" || project.data?.status !== "active";
@@ -284,6 +384,29 @@ export default function ReaderPage() {
   function pick(block: Block) {
     setSelected(block);
     setPage(block.page_no);
+  }
+
+  // The note carries what it needs to light up the block: the server already matched it to a
+  // block of the version's current parse, so no second lookup is made here.
+  function jumpTo(note: Note, versions: Version[] | null) {
+    const anchor = note.anchor;
+    if (!anchor || anchor.status !== "located" || !anchor.block_id || !anchor.bbox) {
+      return;
+    }
+    const target = versions?.find((item) => item.id === anchor.version_id);
+    if (target && target.id !== version?.id) {
+      switchVersion(target);
+    }
+    pick({
+      id: anchor.block_id,
+      seq: 0,
+      page_no: anchor.page_no,
+      kind: "text_line",
+      text: anchor.text,
+      bbox: anchor.bbox,
+      granularity: anchor.granularity,
+      content_hash: "",
+    });
   }
 
   function switchVersion(next: Version) {
@@ -316,6 +439,22 @@ export default function ReaderPage() {
           )}
         </main>
       </>
+    );
+  }
+
+  if (paper.data && !paper.data.current_version && !paper.loading) {
+    return (
+      <NoPdfView
+        paper={paper.data}
+        base={base}
+        projectId={projectId}
+        projectName={project.data?.name ?? "返回项目"}
+        readOnly={readOnly}
+        onChanged={async () => {
+          setChosenVersion(null);
+          await paper.reload();
+        }}
+      />
     );
   }
 
@@ -386,6 +525,18 @@ export default function ReaderPage() {
               base={base}
               disabled={readOnly}
               onSaved={paper.reload}
+            />
+            <Notes
+              projectId={projectId}
+              paperId={paperId}
+              canWrite={!readOnly}
+              target={
+                selected
+                  ? { versionId: version.id, blockId: selected.id, pageNo: selected.page_no }
+                  : null
+              }
+              currentVersionNo={version.version_no}
+              onJump={(note) => jumpTo(note, versions.data)}
             />
             <Versions
               base={base}

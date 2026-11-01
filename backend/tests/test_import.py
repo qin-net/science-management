@@ -38,9 +38,7 @@ def test_b1_upload_keeps_exact_bytes_and_records_the_event(owner):
     assert version["original_filename"] == "attention.pdf"
     assert paper["parse_job"]["status"] == "queued"
 
-    url = (
-        f"/api/v1/projects/{project['id']}/papers/{paper['id']}/versions/{version['id']}/file"
-    )
+    url = f"/api/v1/projects/{project['id']}/papers/{paper['id']}/versions/{version['id']}/file"
     download = owner.client.get(url)
     assert download.status_code == 200
     assert hashlib.sha256(download.content).hexdigest() == version["sha256"]
@@ -111,9 +109,7 @@ def test_b3_concurrent_uploads_keep_one_copy(owner):
     project = owner.new_project()
     data = text_pdf()
     with ThreadPoolExecutor(max_workers=4) as pool:
-        codes = sorted(
-            pool.map(lambda _: owner.upload(project["id"], data).status_code, range(4))
-        )
+        codes = sorted(pool.map(lambda _: owner.upload(project["id"], data).status_code, range(4)))
     assert codes == [202, 409, 409, 409]
     assert paper_count() == 1
     assert len([path for path in stored_files() if path.suffix == ".pdf"]) == 1

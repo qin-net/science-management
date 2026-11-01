@@ -1,0 +1,5 @@
+HTTP/2 200 
+x-rate-limit-limit: 1
+x-rate-limit-interval: 1s
+x-concurrency-limit: 1
+x-api-pool: public-array

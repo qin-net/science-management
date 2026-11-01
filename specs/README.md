@@ -8,6 +8,10 @@
 | [DECISIONS.md](./DECISIONS.md) | 技术决策记录，含偏离开发文档的原因 |
 | [000-foundation.md](./000-foundation.md) | 阶段 0：工程底座 |
 | [001-p0-workspace-paper-import.md](./001-p0-workspace-paper-import.md) | P0.1 / P0.2：工作区与 PDF 导入纵向切片 |
+| [002-p0-literature-search.md](./002-p0-literature-search.md) | P0.3：文献检索（arXiv、OpenAlex、Crossref）与元数据导入 |
+| [003-p0-notes-annotations.md](./003-p0-notes-annotations.md) | P0.4（第一部分）：笔记与带来源的批注 |
+| [004-p0-tasks.md](./004-p0-tasks.md) | P0.5（第一部分）：项目任务与看板 |
+| [005-p0-cockpit.md](./005-p0-cockpit.md) | P0.6：最小驾驶舱（工作区总览） |
 | [spikes/](./spikes/) | 上游候选验证记录（版本、许可、实测结果、失败情况） |
 
 ## 状态词

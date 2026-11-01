@@ -61,6 +61,9 @@ export type Paper = {
   year: number | null;
   doi: string | null;
   arxiv_id: string | null;
+  abstract: string | null;
+  venue: string | null;
+  source_links: { open_access_url?: string; landing_url?: string } | null;
   metadata_provenance: Record<string, string>;
   current_version: Version | null;
   parse_job: Job | null;
@@ -99,4 +102,168 @@ export type ResearchEvent = {
   event_type: string;
   payload: Record<string, unknown>;
   created_at: string;
+};
+
+export type SourceName = "arxiv" | "openalex" | "crossref";
+
+export type SourceStatus =
+  | "ok"
+  | "timeout"
+  | "unavailable"
+  | "rate_limited"
+  | "quota_exhausted"
+  | "cooling_down"
+  | "throttled"
+  | "bad_request"
+  | "bad_response";
+
+export type SourceReport = {
+  status: SourceStatus;
+  count: number;
+  total: number | null;
+  cached: boolean;
+  fetched_at: string | null;
+  duration_ms: number | null;
+  message: string | null;
+  retry_after?: number;
+  reset_at?: string;
+  until?: string;
+  quota?: { remaining_usd: number | null; reset_at: string | null; shared: boolean };
+};
+
+export type SearchResult = {
+  title: string | null;
+  authors: string[];
+  year: number | null;
+  venue: string | null;
+  doi: string | null;
+  arxiv_id: string | null;
+  abstract: string | null;
+  sources: SourceName[];
+  provenance: Record<string, string>;
+  conflicts: Record<string, Record<string, number>>;
+  missing: string[];
+  citations: Record<string, number>;
+  open_access_url: string | null;
+  landing_url: string | null;
+  in_project: string | null;
+  similar_to: string[];
+  similar_papers: string[];
+};
+
+export type SearchResponse = {
+  outcome: "results" | "no_match" | "partial" | "all_failed";
+  ranking: string;
+  sources: Partial<Record<SourceName, SourceReport>>;
+  results: SearchResult[];
+};
+
+export type NoteKind = "project" | "paper" | "annotation";
+
+export type NoteAnchor = {
+  version_id: string;
+  version_no: number;
+  page_no: number;
+  text: string;
+  status: "located" | "stale" | "unparsed";
+  block_id: string | null;
+  bbox: [number, number, number, number] | null;
+  granularity: "block" | "page";
+};
+
+export type Note = {
+  id: string;
+  kind: NoteKind;
+  paper_id: string | null;
+  paper_title: string | null;
+  author_id: string;
+  author_name: string;
+  body: string;
+  version: number;
+  editable: boolean;
+  deletable: boolean;
+  anchor: NoteAnchor | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type NotesPage = { items: Note[]; total: number; offset: number; limit: number };
+
+export type TaskStatus = "todo" | "doing" | "blocked" | "done" | "cancelled";
+export type TaskPriority = "low" | "normal" | "high";
+
+export type Task = {
+  id: string;
+  title: string;
+  description: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  blocked_reason: string | null;
+  assignee_id: string | null;
+  assignee_name: string | null;
+  assignee_active: boolean | null;
+  due_date: string | null;
+  overdue: boolean;
+  paper_id: string | null;
+  paper_title: string | null;
+  created_by: string;
+  created_by_name: string;
+  completed_at: string | null;
+  version: number;
+  editable: boolean;
+  deletable: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TasksPage = {
+  items: Task[];
+  total: number;
+  offset: number;
+  limit: number;
+  counts: Record<TaskStatus | "overdue", number>;
+};
+
+export type OverviewProject = {
+  id: string;
+  name: string;
+  status: "active" | "archived";
+  paper_count: number;
+  parsed_paper_count: number;
+  tasks: Record<TaskStatus | "overdue", number>;
+  last_activity_at: string | null;
+};
+
+export type OverviewTask = {
+  id: string;
+  title: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  due_date: string | null;
+  overdue: boolean;
+  project_id: string;
+  project_name: string;
+};
+
+export type OverviewEvent = {
+  id: string;
+  event_type: string;
+  project_id: string | null;
+  project_name: string | null;
+  actor_name: string | null;
+  created_at: string;
+};
+
+export type Overview = {
+  today: string;
+  totals: {
+    active_projects: number;
+    archived_projects: number;
+    papers: number;
+    open_tasks: number;
+    overdue_tasks: number;
+  };
+  projects: OverviewProject[];
+  my_tasks: { total: number; items: OverviewTask[] };
+  recent_events: OverviewEvent[];
 };

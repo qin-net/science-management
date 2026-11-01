@@ -181,9 +181,7 @@ class Worker:
                 job.error_message = None
                 claim = Claim(job.id, job.attempts, job.parser, version.storage_key)
                 db.commit()
-                log.info(
-                    "job claimed", extra={"job_id": str(job.id), "worker_id": self.worker_id}
-                )
+                log.info("job claimed", extra={"job_id": str(job.id), "worker_id": self.worker_id})
                 return claim
 
     def _owned(self, db: Session, claim: Claim) -> Job | None:
@@ -204,9 +202,7 @@ class Worker:
             job = self._owned(db, claim)
             if job is None:
                 raise LeaseLost
-            job.lease_expires_at = utcnow() + timedelta(
-                seconds=self.settings.worker_lease_seconds
-            )
+            job.lease_expires_at = utcnow() + timedelta(seconds=self.settings.worker_lease_seconds)
             cancelled = job.cancel_requested
             db.commit()
         if cancelled:
@@ -433,12 +429,11 @@ class Worker:
             self._close(job, "succeeded")
             self._event(db, job, "paper.parsed", {"block_count": len(rows)})
             db.commit()
-        log.info(
-            "job succeeded", extra={"job_id": str(claim.job_id), "worker_id": self.worker_id}
-        )
+        log.info("job succeeded", extra={"job_id": str(claim.job_id), "worker_id": self.worker_id})
 
     def _apply_metadata(self, db: Session, version: PaperVersion, result: ParseResult) -> None:
-        """Fill gaps from the PDF, but never overwrite what a user entered."""
+        """Fill gaps from the PDF. A value with a recorded origin other than an earlier parse
+        (typed by a user, or supplied by arXiv, OpenAlex or Crossref) is never overwritten."""
         paper = db.get_one(Paper, version.paper_id, with_for_update=True)
         if paper.current_version_id != version.id:
             return
@@ -446,7 +441,7 @@ class Worker:
         title = scrub(result.title) if result.title else None
         authors = [scrub(author) for author in result.authors]
         for field, value in (("title", title), ("authors", authors)):
-            if value and provenance.get(field) != "user":
+            if value and provenance.get(field) in (None, "pdf_metadata"):
                 setattr(paper, field, value)
                 provenance[field] = "pdf_metadata"
         paper.metadata_provenance = provenance

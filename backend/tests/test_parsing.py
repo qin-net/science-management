@@ -35,12 +35,8 @@ def run_upload(owner, data: bytes) -> tuple[dict, dict]:
     return project, detail
 
 
-@pytest.mark.parametrize(
-    "rotate", [0, 90, 180, 270], ids=lambda angle: f"rotate-{angle}"
-)
-@pytest.mark.parametrize(
-    "crop", [None, (30, 300, 330, 590)], ids=["full-page", "cropped"]
-)
+@pytest.mark.parametrize("rotate", [0, 90, 180, 270], ids=lambda angle: f"rotate-{angle}")
+@pytest.mark.parametrize("crop", [None, (30, 300, 330, 590)], ids=["full-page", "cropped"])
 def test_c2_bbox_matches_rendered_ink(tmp_path, rotate, crop):
     data = transformed_pdf(rotate, crop)
     path = tmp_path / "page.pdf"
@@ -83,10 +79,7 @@ def test_c1_blocks_carry_page_location_and_content_hash(owner):
     assert result["parser"] == "pdfium" and "pdfium" in result["parser_version"]
     assert any("structure not reconstructed" in warning for warning in result["warnings"])
 
-    url = (
-        f"/api/v1/projects/{project['id']}/papers/{paper['id']}"
-        f"/versions/{version['id']}/blocks"
-    )
+    url = f"/api/v1/projects/{project['id']}/papers/{paper['id']}/versions/{version['id']}/blocks"
     blocks = owner.client.get(url).json()
     assert blocks["parsed"] is True and blocks["total"] == 4
     for block in blocks["items"]:
@@ -105,10 +98,7 @@ def test_c1_real_paper(owner):
     assert paper["parse_job"]["status"] == "succeeded"
     version = paper["current_version"]
     assert version["page_count"] == 15
-    url = (
-        f"/api/v1/projects/{project['id']}/papers/{paper['id']}"
-        f"/versions/{version['id']}/blocks"
-    )
+    url = f"/api/v1/projects/{project['id']}/papers/{paper['id']}/versions/{version['id']}/blocks"
     blocks = owner.client.get(url, params={"limit": 2000}).json()
     assert blocks["total"] > 500
     text = " ".join(block["text"] for block in blocks["items"])

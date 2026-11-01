@@ -2,8 +2,9 @@
 
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -38,6 +39,19 @@ class Settings(BaseSettings):
     worker_lease_seconds: int = Field(default=60, ge=5)
     worker_stale_seconds: int = Field(default=30, ge=5)
 
+    # Literature search (specs/002). Base URLs exist so tests and e2e can point at a local
+    # upstream; production keeps the defaults.
+    openalex_api_key: str = ""
+    contact_email: str = ""
+    arxiv_base_url: str = "https://export.arxiv.org"
+    openalex_base_url: str = "https://api.openalex.org"
+    crossref_base_url: str = "https://api.crossref.org"
+    search_source_timeout_seconds: float = Field(default=10.0, gt=0)
+    search_max_wait_seconds: float = Field(default=8.0, ge=0)
+    search_cache_ttl_seconds: int = Field(default=21600, ge=0)
+    search_user_per_minute: int = Field(default=10, gt=0)
+    arxiv_min_interval_seconds: float = Field(default=3.0, ge=0)
+
     log_level: str = "INFO"
 
     @field_validator("database_url")
@@ -53,6 +67,15 @@ class Settings(BaseSettings):
         if value not in {"pdfium", "docling"}:
             raise ValueError("PARSER_DEFAULT must be pdfium or docling")
         return value
+
+    @model_validator(mode="after")
+    def _respect_arxiv_terms(self) -> "Settings":
+        # arXiv's terms: at most one request every three seconds. Only a local test
+        # upstream may be polled faster.
+        official = urlsplit(self.arxiv_base_url).hostname == "export.arxiv.org"
+        if official and self.arxiv_min_interval_seconds < 3:
+            raise ValueError("ARXIV_MIN_INTERVAL_SECONDS must be at least 3 for export.arxiv.org")
+        return self
 
     @property
     def max_upload_bytes(self) -> int:

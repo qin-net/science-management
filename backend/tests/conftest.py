@@ -47,6 +47,9 @@ def _recreate(server_url: str, *names: str) -> None:
             conn.execute(f'CREATE DATABASE "{name}"')
 
 
+from tests.fake_upstream import FakeUpstream  # noqa: E402
+
+UPSTREAM = FakeUpstream().start()
 SERVER_URL = _server_url()
 _recreate(SERVER_URL, TEST_DB, EMPTY_DB)
 STORAGE_ROOT = Path(tempfile.mkdtemp(prefix="researchos-test-"))
@@ -62,6 +65,17 @@ os.environ.update(
     PARSER_DEFAULT="pdfium",
     DOCLING_PYTHON="",
     LOG_LEVEL="INFO",
+    # The literature sources are a local fake (tests/fake_upstream.py), never the internet.
+    ARXIV_BASE_URL=f"{UPSTREAM.url}/arxiv",
+    OPENALEX_BASE_URL=f"{UPSTREAM.url}/openalex",
+    CROSSREF_BASE_URL=f"{UPSTREAM.url}/crossref",
+    OPENALEX_API_KEY="",
+    CONTACT_EMAIL="",
+    SEARCH_SOURCE_TIMEOUT_SECONDS="2",
+    SEARCH_MAX_WAIT_SECONDS="3",
+    SEARCH_CACHE_TTL_SECONDS="600",
+    SEARCH_USER_PER_MINUTE="1000",
+    ARXIV_MIN_INTERVAL_SECONDS="0.3",
 )
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -80,6 +94,29 @@ def schema():
     yield
     get_engine().dispose()
     shutil.rmtree(STORAGE_ROOT, ignore_errors=True)
+
+
+@pytest.fixture
+def upstream():
+    """The fake literature sources, back to their recorded defaults for each test."""
+    saved = dict(UPSTREAM.handlers)
+    for log in UPSTREAM.seen.values():
+        log.clear()
+    yield UPSTREAM
+    UPSTREAM.handlers.update(saved)
+
+
+@pytest.fixture
+def settings(monkeypatch):
+    """The live Settings object; tests change fields through monkeypatch."""
+    from researchos.config import get_settings
+
+    class Patcher:
+        def set(self, **values) -> None:
+            for name, value in values.items():
+                monkeypatch.setattr(get_settings(), name, value)
+
+    return Patcher()
 
 
 @pytest.fixture(autouse=True)

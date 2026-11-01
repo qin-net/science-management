@@ -374,3 +374,72 @@ button.danger {
     grid-template-columns: 1fr;
   }
 }
+
+/* Notes: bodies and quoted source text are plain text; line breaks are kept. */
+.note-body,
+.note-quote {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.note-quote {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border-left: 3px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  font-size: 13px;
+}
+
+button.note-quote.jump {
+  border-left-color: var(--cyan);
+  cursor: pointer;
+}
+
+.note-quote.stale {
+  border-left-color: var(--amber);
+}
+
+.note-quote.flash,
+.list-item.flash {
+  outline: 1.5px solid var(--cyan);
+}
+
+/* Tasks: titles and descriptions are plain text; the board scrolls sideways rather than squeezing. */
+.board {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(200px, 1fr));
+  gap: 10px;
+  overflow-x: auto;
+  align-items: start;
+}
+
+.column h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.totals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.total {
+  display: grid;
+  gap: 2px;
+  min-width: 120px;
+  padding: 10px 14px;
+  background: var(--panel-raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.total-value {
+  font-size: 1.6rem;
+  font-weight: 600;
+}

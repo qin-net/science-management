@@ -8,16 +8,21 @@ untouched. Needs the Chromium build: npm --prefix web exec -- playwright install
 Run from the repo root: backend/.venv/bin/python scripts/e2e.py [playwright arguments]
 """
 
+import json
 import os
 import shutil
+import threading
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pgserver
+import psycopg
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
@@ -29,8 +34,128 @@ API_PORT = 8100
 WEB_PORT = 3100
 START_TIMEOUT_SECONDS = 60
 
+CONTROL_PORT = 8101
+
 sys.path.insert(0, str(BACKEND))
 from tests import pdf_samples  # noqa: E402
+from tests.fake_upstream import ARXIV_EMPTY, FakeUpstream, Reply  # noqa: E402
+
+JSON = {"Content-Type": "application/json"}
+EMPTY = {
+    "arxiv": Reply(body=ARXIV_EMPTY),
+    "openalex": Reply(body='{"meta": {"count": 0}, "results": []}', headers=JSON),
+    "crossref": Reply(body='{"message": {"total-results": 0, "items": []}}', headers=JSON),
+}
+# Seconds a "slow" source stays silent: longer than SEARCH_SOURCE_TIMEOUT_SECONDS (2) so it times
+# out, and the one retry makes the source take about four seconds in all.
+SLOW_SECONDS = 5.0
+# A "delayed" source answers normally, but late enough for a test to see the search in progress.
+DELAYED_SECONDS = 1.5
+
+
+def apply_mode(upstream: FakeUpstream, source: str, mode: str) -> None:
+    """Make one fake source behave a certain way. Used by the browser tests."""
+    defaults = FakeUpstream()
+    default = defaults.handlers[source]
+    if mode == "ok":
+        upstream.handlers[source] = default
+    elif mode == "empty":
+        upstream.set(source, EMPTY[source])
+    elif mode == "rate_limited":
+        upstream.set(source, Reply(429, "slow down", {"Retry-After": "30"}))
+    elif mode == "unavailable":
+        upstream.set(source, Reply(503, "down"))
+    elif mode == "slow":
+        upstream.set(source, Reply(delay=SLOW_SECONDS))
+    elif mode == "delayed":
+        upstream.handlers[source] = lambda seen: Reply(
+            **{**vars(default(seen)), "delay": DELAYED_SECONDS}
+        )
+    elif mode == "bad_json":
+        upstream.set(source, Reply(body="{not json", headers=JSON))
+    elif mode == "markup":
+        upstream.handlers[source] = lambda seen: _markup(default(seen), source)
+    else:
+        raise ValueError(f"unknown mode {mode}")
+
+
+def _markup(reply: Reply, source: str) -> Reply:
+    """Put script-looking text into titles and abstracts of the recorded reply."""
+    body = reply.body.decode() if isinstance(reply.body, bytes) else reply.body
+    hostile = "<img src=x onerror=window.__pwned=1>PWNED-TITLE"
+    if source == "arxiv":
+        head, entry, rest = body.partition("<entry>")
+        rest = rest.replace("<title>", f"<title>{hostile.replace('<', '&lt;')} ", 1)
+        body = head + entry + rest
+    elif source == "openalex":
+        data = json.loads(body)
+        for work in data["results"]:
+            work["title"] = hostile + (work.get("title") or "")
+        body = json.dumps(data)
+    else:
+        data = json.loads(body)
+        for item in data["message"]["items"]:
+            item["title"] = [hostile + ((item.get("title") or [""])[0])]
+        body = json.dumps(data)
+    return Reply(reply.status, body, reply.headers)
+
+
+def start_control(upstream: FakeUpstream, database_url: str) -> ThreadingHTTPServer:
+    """A tiny HTTP control surface so Playwright can steer the fake sources between tests.
+
+    GET /reset                      forget handlers, requests seen, cache, cooldowns, call counts
+    GET /set?source=X&mode=Y        change one source (see apply_mode)
+    GET /seen?source=X              how many requests that source received since the last reset
+    GET /alter-anchors              make every annotation remember a different text (see below)
+    """
+    dsn = database_url.replace("postgresql+psycopg://", "postgresql://", 1)
+
+    class Control(BaseHTTPRequestHandler):
+        def log_message(self, *args) -> None:
+            pass
+
+        def do_GET(self) -> None:
+            parts = urlsplit(self.path)
+            query = {k: v[0] for k, v in parse_qs(parts.query).items()}
+            status, payload = 200, {"ok": True}
+            try:
+                if parts.path == "/reset":
+                    fresh = FakeUpstream()
+                    upstream.handlers = fresh.handlers
+                    for name in upstream.seen:
+                        upstream.seen[name] = []
+                    with psycopg.connect(dsn, autocommit=True) as conn:
+                        conn.execute("DELETE FROM search_cache")
+                        conn.execute("DELETE FROM source_state")
+                        conn.execute("DELETE FROM search_calls")
+                elif parts.path == "/set":
+                    apply_mode(upstream, query["source"], query["mode"])
+                elif parts.path == "/alter-anchors":
+                    # The pdfium parser is deterministic, so re-parsing the same file cannot
+                    # change a page. This gives the stored quote a hash no block has, which is
+                    # exactly the state a changed page leaves behind (specs/003, L3).
+                    with psycopg.connect(dsn, autocommit=True) as conn:
+                        conn.execute(
+                            "UPDATE notes SET anchor = jsonb_set(anchor, '{content_hash}', "
+                            "to_jsonb('sha256:' || repeat('ab', 32))) WHERE anchor IS NOT NULL"
+                        )
+                elif parts.path == "/seen":
+                    payload = {"count": upstream.count(query["source"])}
+                else:
+                    status, payload = 404, {"ok": False}
+            except Exception as exc:  # report to the test instead of hanging it
+                status, payload = 500, {"ok": False, "error": repr(exc)}
+            body = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", CONTROL_PORT), Control)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
 
 
 def write_fixtures() -> None:
@@ -71,9 +196,11 @@ def main(argv: list[str]) -> int:
     write_fixtures()
     PGDATA.mkdir(parents=True, exist_ok=True)
     server = pgserver.get_server(PGDATA)
+    upstream = FakeUpstream().start()
+    database_url = server.get_uri().replace("postgresql://", "postgresql+psycopg://", 1)
     env = {
         **os.environ,
-        "DATABASE_URL": server.get_uri().replace("postgresql://", "postgresql+psycopg://", 1),
+        "DATABASE_URL": database_url,
         "STORAGE_DIR": str(STORAGE),
         "ALLOWED_ORIGINS": f"http://localhost:{WEB_PORT},http://127.0.0.1:{WEB_PORT}",
         "ALLOW_REGISTRATION": "true",
@@ -82,7 +209,18 @@ def main(argv: list[str]) -> int:
         "DOCLING_PYTHON": "",
         "PARSE_RETRY_BASE_SECONDS": "0",
         "API_ORIGIN": f"http://127.0.0.1:{API_PORT}",
+        # Search talks to a local stand-in for the three sources; nothing leaves the machine.
+        "ARXIV_BASE_URL": f"{upstream.url}/arxiv",
+        "OPENALEX_BASE_URL": f"{upstream.url}/openalex",
+        "CROSSREF_BASE_URL": f"{upstream.url}/crossref",
+        "OPENALEX_API_KEY": "",
+        "SEARCH_SOURCE_TIMEOUT_SECONDS": "2",
+        "SEARCH_MAX_WAIT_SECONDS": "3",
+        "SEARCH_CACHE_TTL_SECONDS": "600",
+        "SEARCH_USER_PER_MINUTE": "1000",
+        "ARXIV_MIN_INTERVAL_SECONDS": "0.3",
     }
+    control = start_control(upstream, database_url)
     npm = shutil.which("npm") or "npm"
     subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"], cwd=BACKEND, env=env, check=True
@@ -121,12 +259,15 @@ def main(argv: list[str]) -> int:
             **env,
             "E2E_BASE_URL": f"http://127.0.0.1:{WEB_PORT}",
             "E2E_FIXTURES": str(FIXTURES),
+            "E2E_CONTROL": f"http://127.0.0.1:{CONTROL_PORT}",
             "E2E_REAL_PAPER": str(pdf_samples.REAL_PAPER) if pdf_samples.REAL_PAPER.exists() else "",
         }
         return subprocess.run(
             [npm, "exec", "--", "playwright", "test", *argv], cwd=WEB, env=test_env
         ).returncode
     finally:
+        control.shutdown()
+        upstream.stop()
         for process in processes:
             process.terminate()
         for process in processes:

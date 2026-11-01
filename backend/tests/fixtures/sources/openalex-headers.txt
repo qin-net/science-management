@@ -1,0 +1,10 @@
+HTTP/2 200 
+x-ratelimit-cost-usd: 0.001
+x-ratelimit-credits-used: 10
+x-ratelimit-limit: 1000
+x-ratelimit-limit-usd: 0.1
+x-ratelimit-onetime-remaining: 0
+x-ratelimit-prepaid-remaining-usd: 0
+x-ratelimit-remaining: 708
+x-ratelimit-remaining-usd: 0.0708
+x-ratelimit-reset: 50484
