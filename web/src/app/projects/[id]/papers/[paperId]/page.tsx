@@ -1,10 +1,11 @@
 "use client";
 
-import { useParams } from "next/navigation";
-import { type ChangeEvent, type FormEvent, useMemo, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
+import { type ChangeEvent, type FormEvent, useEffect, useMemo, useState } from "react";
 
 import { Notes } from "@/components/Notes";
 import { PdfView } from "@/components/PdfView";
+import { SummaryPanel } from "@/components/SummaryPanel";
 import {
   ErrorNotice,
   formatBytes,
@@ -87,12 +88,14 @@ function Blocks({
   paper,
   version,
   selected,
+  focusId,
   onSelect,
 }: {
   base: string;
   paper: Paper;
   version: Version;
   selected: Block | null;
+  focusId: string | null;
   onSelect: (block: Block) => void;
 }) {
   const job = version.id === paper.current_version?.id ? paper.parse_job : null;
@@ -100,6 +103,19 @@ function Blocks({
     () => loadAllBlocks(`${base}/versions/${version.id}`),
     `${version.id}:${version.current_parse_job_id}`,
   );
+
+  // A link from an answer (?block=) opens the reader with that block already picked.
+  const [focused, setFocused] = useState<string | null>(null);
+  useEffect(() => {
+    if (!focusId || focused === focusId || !blocks.data) {
+      return;
+    }
+    const target = blocks.data.items.find((item) => item.id === focusId);
+    setFocused(focusId);
+    if (target) {
+      onSelect(target);
+    }
+  }, [focusId, focused, blocks.data, onSelect]);
 
   return (
     <>
@@ -361,6 +377,7 @@ function NoPdfView({
 
 export default function ReaderPage() {
   const { id: projectId, paperId } = useParams<{ id: string; paperId: string }>();
+  const focusId = useSearchParams().get("block");
   const base = `/projects/${projectId}/papers/${paperId}`;
   const paper = useResource(() => api<Paper>(base), base, (data) => isActive(data.parse_job));
   const project = useResource(() => api<Project>(`/projects/${projectId}`), projectId);
@@ -369,6 +386,7 @@ export default function ReaderPage() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Block | null>(null);
   const [actionError, setActionError] = useState<ApiFailure | null>(null);
+  const [notesRefresh, setNotesRefresh] = useState(0);
   const versions = useResource(
     () => api<Version[]>(`${base}/versions`),
     `${base}:${paper.data?.current_version?.id ?? "none"}`,
@@ -475,6 +493,7 @@ export default function ReaderPage() {
               paper={paper.data}
               version={version}
               selected={selected}
+              focusId={focusId}
               onSelect={pick}
             />
           </aside>
@@ -526,7 +545,15 @@ export default function ReaderPage() {
               disabled={readOnly}
               onSaved={paper.reload}
             />
+            <SummaryPanel
+              projectId={projectId}
+              paperId={paperId}
+              canAsk={role === "member" || role === "admin" || role === "owner"}
+              canWrite={!readOnly}
+              onSaved={() => setNotesRefresh((count) => count + 1)}
+            />
             <Notes
+              refresh={notesRefresh}
               projectId={projectId}
               paperId={paperId}
               canWrite={!readOnly}

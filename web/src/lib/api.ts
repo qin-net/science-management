@@ -26,6 +26,18 @@ const MESSAGES: Record<string, string> = {
   record_incomplete: "来源给出的记录缺少标题，无法导入",
   invalid_anchor: "批注所指的文本块已不在这个版本的当前解析结果里，请刷新后重选",
   invalid_assignee: "负责人必须是这个工作区的成员",
+  nothing_to_export: "没有带标题的文献可以导出",
+  too_many: "文献太多，一次最多导出 500 篇",
+  model_not_configured: "服务器没有配置模型密钥（ANTHROPIC_API_KEY），暂时不能提问",
+  model_unavailable: "模型服务暂时不可用，请稍后再试或联系管理员",
+  model_busy: "模型服务繁忙，请稍后再试",
+  model_rejected: "模型服务拒绝了这次请求",
+  model_timeout: "模型回答超时，请缩小范围后再试",
+  model_refused: "模型拒绝回答这个问题",
+  model_bad_output: "模型返回的内容无法使用，请重试",
+  model_rate_limited: "提问太频繁或今日额度已用完，请稍后再试",
+  no_readable_papers: "所选文献都没有可用的解析文本，请先等待解析完成",
+  context_too_large: "所选文献太长，一次问不了，请少选几篇",
   blocked_reason_required: "受阻的任务必须写明原因",
   blocked_reason_not_allowed: "只有受阻的任务才有受阻原因",
   job_active: "有解析任务正在进行，请先取消",
@@ -112,4 +124,18 @@ export function uploadPdf<T>(path: string, file: File): Promise<T> {
     headers: { "Content-Type": "application/pdf" },
     body: file,
   });
+}
+
+/** A file the server builds on request; failures are read as JSON like any other call. */
+export async function fetchFile(path: string): Promise<{ blob: Blob; headers: Headers }> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/v1${path}`);
+  } catch {
+    throw new ApiFailure(0, "backend_unreachable", "network error");
+  }
+  if (!response.ok) {
+    throw await failureFrom(response);
+  }
+  return { blob: await response.blob(), headers: response.headers };
 }

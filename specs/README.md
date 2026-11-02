@@ -12,6 +12,9 @@
 | [003-p0-notes-annotations.md](./003-p0-notes-annotations.md) | P0.4（第一部分）：笔记与带来源的批注 |
 | [004-p0-tasks.md](./004-p0-tasks.md) | P0.5（第一部分）：项目任务与看板 |
 | [005-p0-cockpit.md](./005-p0-cockpit.md) | P0.6：最小驾驶舱（工作区总览） |
+| [006-p0-citation-export.md](./006-p0-citation-export.md) | P0.7：引用导出（BibTeX、RIS） |
+| [007-p0-cited-qa.md](./007-p0-cited-qa.md) | P0.8：带出处的文献问答（接入 Anthropic 模型） |
+| [008-p0-paper-summary.md](./008-p0-paper-summary.md) | P0.9：单篇文献的核心贡献总结 |
 | [spikes/](./spikes/) | 上游候选验证记录（版本、许可、实测结果、失败情况） |
 
 ## 状态词

@@ -38,6 +38,7 @@ CONTROL_PORT = 8101
 
 sys.path.insert(0, str(BACKEND))
 from tests import pdf_samples  # noqa: E402
+from tests.fake_model import FakeModel, ModelReply, answer, message_reply  # noqa: E402
 from tests.fake_upstream import ARXIV_EMPTY, FakeUpstream, Reply  # noqa: E402
 
 JSON = {"Content-Type": "application/json"}
@@ -100,11 +101,42 @@ def _markup(reply: Reply, source: str) -> Reply:
     return Reply(reply.status, body, reply.headers)
 
 
-def start_control(upstream: FakeUpstream, database_url: str) -> ThreadingHTTPServer:
+HOSTILE = "<img src=x onerror=window.__pwned=1>"
+
+
+def apply_model_mode(model: FakeModel, mode: str) -> None:
+    """Make the fake language model behave a certain way for the browser tests."""
+    if mode == "ok":
+        model.default = message_reply(
+            text=answer(
+                True,
+                [
+                    {"text": "Answer with evidence.", "block_numbers": [1, 999]},
+                    {"text": "Answer without a source.", "block_numbers": []},
+                ],
+            )
+        )
+    elif mode == "hostile":
+        model.default = message_reply(
+            text=answer(True, [{"text": f"{HOSTILE}claim", "block_numbers": [1]}])
+        )
+    elif mode == "unanswerable":
+        model.default = message_reply(text=answer(False, []))
+    elif mode == "down":
+        model.default = ModelReply(500, {"type": "error"})
+    elif mode == "busy":
+        model.default = ModelReply(529, {"type": "error"})
+    else:
+        raise ValueError(f"unknown model mode {mode}")
+
+
+def start_control(upstream: FakeUpstream, model: FakeModel, database_url: str) -> ThreadingHTTPServer:
     """A tiny HTTP control surface so Playwright can steer the fake sources between tests.
 
     GET /reset                      forget handlers, requests seen, cache, cooldowns, call counts
     GET /set?source=X&mode=Y        change one source (see apply_mode)
+    GET /model?mode=Y               change what the fake language model answers (apply_model_mode)
+    GET /model-seen                 how many requests the fake language model received
     GET /seen?source=X              how many requests that source received since the last reset
     GET /alter-anchors              make every annotation remember a different text (see below)
     """
@@ -139,6 +171,11 @@ def start_control(upstream: FakeUpstream, database_url: str) -> ThreadingHTTPSer
                             "UPDATE notes SET anchor = jsonb_set(anchor, '{content_hash}', "
                             "to_jsonb('sha256:' || repeat('ab', 32))) WHERE anchor IS NOT NULL"
                         )
+                elif parts.path == "/model":
+                    model.reset()
+                    apply_model_mode(model, query["mode"])
+                elif parts.path == "/model-seen":
+                    payload = {"count": len(model.calls)}
                 elif parts.path == "/seen":
                     payload = {"count": upstream.count(query["source"])}
                 else:
@@ -168,6 +205,7 @@ def write_fixtures() -> None:
         "rotate-270.pdf": pdf_samples.transformed_pdf(rotate=270),
         "crop.pdf": pdf_samples.transformed_pdf(crop=(30, 300, 330, 590)),
         "crop-rotate-90.pdf": pdf_samples.transformed_pdf(rotate=90, crop=(30, 300, 330, 590)),
+        "hostile.pdf": pdf_samples.text_pdf(HOSTILE),
         "scanned.pdf": pdf_samples.scanned_pdf(),
         "encrypted.pdf": pdf_samples.encrypted_pdf(),
         "corrupt.pdf": pdf_samples.corrupt_pdf(),
@@ -197,6 +235,7 @@ def main(argv: list[str]) -> int:
     PGDATA.mkdir(parents=True, exist_ok=True)
     server = pgserver.get_server(PGDATA)
     upstream = FakeUpstream().start()
+    model = FakeModel().start()
     database_url = server.get_uri().replace("postgresql://", "postgresql+psycopg://", 1)
     env = {
         **os.environ,
@@ -219,8 +258,14 @@ def main(argv: list[str]) -> int:
         "SEARCH_CACHE_TTL_SECONDS": "600",
         "SEARCH_USER_PER_MINUTE": "1000",
         "ARXIV_MIN_INTERVAL_SECONDS": "0.3",
+        # The language model is a local stand-in too; no question leaves the machine.
+        "ANTHROPIC_API_KEY": "e2e-key-not-a-secret",
+        "ANTHROPIC_BASE_URL": model.url,
+        "MODEL_USER_PER_MINUTE": "1000",
+        "MODEL_USER_PER_DAY": "1000",
+        "MODEL_TIMEOUT_SECONDS": "10",
     }
-    control = start_control(upstream, database_url)
+    control = start_control(upstream, model, database_url)
     npm = shutil.which("npm") or "npm"
     subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"], cwd=BACKEND, env=env, check=True
@@ -268,6 +313,7 @@ def main(argv: list[str]) -> int:
     finally:
         control.shutdown()
         upstream.stop()
+        model.stop()
         for process in processes:
             process.terminate()
         for process in processes:

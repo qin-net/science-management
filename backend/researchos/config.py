@@ -52,6 +52,17 @@ class Settings(BaseSettings):
     search_user_per_minute: int = Field(default=10, gt=0)
     arxiv_min_interval_seconds: float = Field(default=3.0, ge=0)
 
+    # Model calls (specs/007). The key is only ever read from the environment and is never
+    # logged or returned. The limits are placeholders until the user states a cost ceiling.
+    anthropic_api_key: str = ""
+    anthropic_base_url: str = "https://api.anthropic.com"
+    model_name: str = "claude-sonnet-5-5"
+    model_max_output_tokens: int = Field(default=4096, gt=0)
+    model_timeout_seconds: float = Field(default=120.0, gt=0)
+    model_context_chars: int = Field(default=120_000, gt=0)
+    model_user_per_minute: int = Field(default=5, gt=0)
+    model_user_per_day: int = Field(default=50, gt=0)
+
     log_level: str = "INFO"
 
     @field_validator("database_url")

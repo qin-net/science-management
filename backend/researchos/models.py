@@ -363,6 +363,32 @@ class SourceState(Base):
     updated_at: Mapped[datetime] = timestamp(onupdate=utcnow)
 
 
+class ModelCall(Base):
+    """One call to the language model, for limits and audit. Stores no question, answer or paper
+    text (specs/007 3.1)."""
+
+    __tablename__ = "model_calls"
+    __table_args__ = (
+        CheckConstraint("kind in ('ask','summary')", name="ck_model_call_kind"),
+        CheckConstraint("status in ('started','succeeded','failed')", name="ck_model_call_status"),
+        Index("ix_model_calls_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    kind: Mapped[str] = mapped_column(String(16))
+    model: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="started")
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+    error_class: Mapped[str | None] = mapped_column(String(32))
+    upstream_request_id: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = timestamp()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class SearchCache(Base):
     """Normalized public metadata from the sources. Holds nothing about users or projects."""
 

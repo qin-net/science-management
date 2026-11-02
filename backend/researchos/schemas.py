@@ -423,3 +423,56 @@ class Overview(BaseModel):
     projects: list[OverviewProject]
     my_tasks: OverviewMyTasks
     recent_events: list[OverviewEvent]
+
+
+class AskRequest(Strict):
+    question: str
+    paper_ids: list[uuid.UUID] | None = Field(default=None, max_length=20)
+
+    @field_validator("question")
+    @classmethod
+    def _question_ok(cls, v: str) -> str:
+        v = _plain_text(v, limit=2000, field="the question")
+        if not v:
+            raise ValueError("the question is empty")
+        return v
+
+
+class EvidenceOut(BaseModel):
+    block_id: uuid.UUID
+    paper_id: uuid.UUID
+    paper_title: str | None
+    version_id: uuid.UUID
+    seq: int
+    page_no: int
+    text: str
+
+
+class AnswerSegmentOut(BaseModel):
+    text: str
+    supported: bool
+    evidence: list[EvidenceOut]
+
+
+class UnavailablePaperOut(BaseModel):
+    paper_id: uuid.UUID
+    paper_title: str | None
+    reason: Literal["no_file", "not_parsed", "no_text"]
+
+
+class AskUsageOut(BaseModel):
+    input_tokens: int | None
+    output_tokens: int | None
+
+
+class AskOut(BaseModel):
+    answerable: bool
+    segments: list[AnswerSegmentOut]
+    unavailable: list[UnavailablePaperOut]
+    dropped_citations: int
+    model: str
+    usage: AskUsageOut
+
+
+class SummaryRequest(Strict):
+    language: Literal["zh", "en"] = "zh"

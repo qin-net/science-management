@@ -18,12 +18,14 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "bibtexparser>=2.1.0",
     "fpdf2>=2.9.0",
     "mypy>=1.13",
     "pgserver>=0.1.4",
     "pillow>=11.0.0",
     "pypdf>=6.21.4",
     "pytest>=9.2.0",
+    "rispy>=0.10.0",
     "ruff>=0.17.3",
 ]
 

@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { type ChangeEvent, type FormEvent, useState } from "react";
 
+import { AskPanel } from "@/components/AskPanel";
 import { LiteratureSearch } from "@/components/LiteratureSearch";
 import { Notes } from "@/components/Notes";
+import { ExportCitations } from "@/components/ExportCitations";
 import { Tasks } from "@/components/Tasks";
 import {
   ErrorNotice,
@@ -196,6 +198,7 @@ function Papers({
           </label>
         )}
       </div>
+      {papers.data && <ExportCitations projectId={project.id} paperCount={papers.data.total} />}
       {uploading && <p className="muted">正在上传 {uploading}…</p>}
       {results
         .filter((result) => result.error)
@@ -233,6 +236,7 @@ function Papers({
         ))}
       </ul>
     </section>
+    {canWrite && papers.data && <AskPanel projectId={project.id} papers={papers.data.items} />}
     </>
   );
 }

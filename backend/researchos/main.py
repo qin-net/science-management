@@ -9,6 +9,7 @@ from starlette.datastructures import MutableHeaders
 
 from researchos import __version__
 from researchos.api import (
+    ask,
     auth,
     health,
     literature,
@@ -69,7 +70,17 @@ def create_app() -> FastAPI:
     app = FastAPI(title="ResearchOS", version=__version__)
     app.add_middleware(RequestContext)
     install_error_handlers(app)
-    for module in (auth, workspaces, projects, papers, literature, notes, tasks, overview):
+    for module in (
+        auth,
+        workspaces,
+        projects,
+        papers,
+        literature,
+        notes,
+        tasks,
+        overview,
+        ask,
+    ):
         app.include_router(module.router, prefix="/api/v1", dependencies=[Depends(csrf_guard)])
     app.include_router(health.router)
     return app

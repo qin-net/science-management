@@ -267,3 +267,24 @@ export type Overview = {
   my_tasks: { total: number; items: OverviewTask[] };
   recent_events: OverviewEvent[];
 };
+
+export type Evidence = {
+  block_id: string;
+  paper_id: string;
+  paper_title: string | null;
+  version_id: string;
+  seq: number;
+  page_no: number;
+  text: string;
+};
+
+export type AnswerSegment = { text: string; supported: boolean; evidence: Evidence[] };
+
+export type Answer = {
+  answerable: boolean;
+  segments: AnswerSegment[];
+  unavailable: { paper_id: string; paper_title: string | null; reason: string }[];
+  dropped_citations: number;
+  model: string;
+  usage: { input_tokens: number | null; output_tokens: number | null };
+};

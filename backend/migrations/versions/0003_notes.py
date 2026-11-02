@@ -29,9 +29,15 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.CheckConstraint("char_length(body) <= 20000", name="ck_note_body_length"),
-        sa.CheckConstraint("anchor IS NULL OR version_id IS NOT NULL", name="ck_note_anchor_version"),
-        sa.CheckConstraint("version_id IS NULL OR paper_id IS NOT NULL", name="ck_note_version_paper"),
-        sa.CheckConstraint("anchor IS NOT NULL OR char_length(body) >= 1", name="ck_note_body_present"),
+        sa.CheckConstraint(
+            "anchor IS NULL OR version_id IS NOT NULL", name="ck_note_anchor_version"
+        ),
+        sa.CheckConstraint(
+            "version_id IS NULL OR paper_id IS NOT NULL", name="ck_note_version_paper"
+        ),
+        sa.CheckConstraint(
+            "anchor IS NOT NULL OR char_length(body) >= 1", name="ck_note_body_present"
+        ),
         sa.ForeignKeyConstraint(["workspace_id"], ["workspaces.id"]),
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"]),
         sa.ForeignKeyConstraint(["paper_id"], ["papers.id"]),

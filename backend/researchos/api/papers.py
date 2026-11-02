@@ -2,17 +2,18 @@
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.requests import ClientDisconnect
 
-from researchos import events, storage
+from researchos import citations, events, storage
 from researchos.config import get_settings
 from researchos.db import get_db
 from researchos.errors import ApiError, not_found
@@ -322,6 +323,51 @@ def list_papers(
         offset=offset,
         limit=limit,
         worker_online=bool(online),
+    )
+
+
+EXPORT_LIMIT = 500
+
+
+@router.get("/papers/export")
+def export_papers(
+    project_id: uuid.UUID,
+    format: Literal["bibtex", "ris"],
+    paper_id: list[uuid.UUID] | None = Query(default=None),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Citations for the project's papers (specs/006). Read-only, so no event is written."""
+    require_project(db, user, project_id)
+    query = select(Paper).where(Paper.project_id == project_id)
+    if paper_id:
+        wanted = set(paper_id)
+        query = query.where(Paper.id.in_(wanted))
+    papers = list(
+        db.scalars(query.order_by(Paper.created_at.desc(), Paper.id).limit(EXPORT_LIMIT + 1))
+    )
+    if paper_id and len(papers) != len(wanted):
+        raise not_found("paper")
+    if len(papers) > EXPORT_LIMIT:
+        raise ApiError(
+            422, "too_many", f"export at most {EXPORT_LIMIT} papers at once; choose with paper_id"
+        )
+    titled = [paper for paper in papers if paper.title and paper.title.strip()]
+    if not titled:
+        raise ApiError(422, "nothing_to_export", "no paper with a title to export")
+    text = citations.bibtex(titled) if format == "bibtex" else citations.ris(titled)
+    media, extension = (
+        (citations.BIBTEX_TYPE, "bib") if format == "bibtex" else (citations.RIS_TYPE, "ris")
+    )
+    return Response(
+        content=text.encode("utf-8"),
+        media_type=media,
+        headers={
+            "Content-Disposition": f'attachment; filename="references.{extension}"',
+            "X-Content-Type-Options": "nosniff",
+            "X-Export-Count": str(len(titled)),
+            "X-Export-Skipped": str(len(papers) - len(titled)),
+        },
     )
 
 

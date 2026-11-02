@@ -47,9 +47,11 @@ def _recreate(server_url: str, *names: str) -> None:
             conn.execute(f'CREATE DATABASE "{name}"')
 
 
+from tests.fake_model import FakeModel  # noqa: E402
 from tests.fake_upstream import FakeUpstream  # noqa: E402
 
 UPSTREAM = FakeUpstream().start()
+MODEL = FakeModel().start()
 SERVER_URL = _server_url()
 _recreate(SERVER_URL, TEST_DB, EMPTY_DB)
 STORAGE_ROOT = Path(tempfile.mkdtemp(prefix="researchos-test-"))
@@ -76,6 +78,12 @@ os.environ.update(
     SEARCH_CACHE_TTL_SECONDS="600",
     SEARCH_USER_PER_MINUTE="1000",
     ARXIV_MIN_INTERVAL_SECONDS="0.3",
+    # The language model is a local fake (tests/fake_model.py), never the real API.
+    ANTHROPIC_API_KEY="test-key-not-a-secret",
+    ANTHROPIC_BASE_URL=MODEL.url,
+    MODEL_USER_PER_MINUTE="1000",
+    MODEL_USER_PER_DAY="1000",
+    MODEL_TIMEOUT_SECONDS="5",
 )
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -104,6 +112,14 @@ def upstream():
         log.clear()
     yield UPSTREAM
     UPSTREAM.handlers.update(saved)
+
+
+@pytest.fixture
+def model_api():
+    """The fake language model with no queued replies and no recorded calls."""
+    MODEL.reset()
+    yield MODEL
+    MODEL.reset()
 
 
 @pytest.fixture
