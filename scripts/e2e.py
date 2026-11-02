@@ -130,6 +130,16 @@ def apply_model_mode(model: FakeModel, mode: str) -> None:
         raise ValueError(f"unknown model mode {mode}")
 
 
+HOLD_FUNCTION = """
+CREATE OR REPLACE FUNCTION e2e_hold_job() RETURNS trigger AS $$
+BEGIN
+    NEW.next_run_at := now() + interval '1 hour';
+    RETURN NEW;
+END $$ LANGUAGE plpgsql
+"""
+DROP_HOLD = "DROP TRIGGER IF EXISTS e2e_hold ON jobs"
+
+
 def start_control(upstream: FakeUpstream, model: FakeModel, database_url: str) -> ThreadingHTTPServer:
     """A tiny HTTP control surface so Playwright can steer the fake sources between tests.
 
@@ -138,6 +148,8 @@ def start_control(upstream: FakeUpstream, model: FakeModel, database_url: str) -
     GET /model?mode=Y               change what the fake language model answers (apply_model_mode)
     GET /model-seen                 how many requests the fake language model received
     GET /seen?source=X              how many requests that source received since the last reset
+    GET /hold-jobs                  new parse jobs wait an hour before a worker may take them
+    GET /release-jobs               undo /hold-jobs and let waiting jobs run
     GET /alter-anchors              make every annotation remember a different text (see below)
     """
     dsn = database_url.replace("postgresql+psycopg://", "postgresql://", 1)
@@ -160,8 +172,24 @@ def start_control(upstream: FakeUpstream, model: FakeModel, database_url: str) -
                         conn.execute("DELETE FROM search_cache")
                         conn.execute("DELETE FROM source_state")
                         conn.execute("DELETE FROM search_calls")
+                        conn.execute(DROP_HOLD)
                 elif parts.path == "/set":
                     apply_mode(upstream, query["source"], query["mode"])
+                elif parts.path == "/hold-jobs":
+                    # A real parse of a small PDF ends in about 0.1 s, too fast for a browser
+                    # test to click "cancel". Pushing next_run_at forward keeps the job queued
+                    # (the worker only claims jobs that are due) without touching worker code.
+                    with psycopg.connect(dsn, autocommit=True) as conn:
+                        conn.execute(HOLD_FUNCTION)
+                        conn.execute("DROP TRIGGER IF EXISTS e2e_hold ON jobs")
+                        conn.execute(
+                            "CREATE TRIGGER e2e_hold BEFORE INSERT ON jobs "
+                            "FOR EACH ROW EXECUTE FUNCTION e2e_hold_job()"
+                        )
+                elif parts.path == "/release-jobs":
+                    with psycopg.connect(dsn, autocommit=True) as conn:
+                        conn.execute(DROP_HOLD)
+                        conn.execute("UPDATE jobs SET next_run_at = now() WHERE status = 'queued'")
                 elif parts.path == "/alter-anchors":
                     # The pdfium parser is deterministic, so re-parsing the same file cannot
                     # change a page. This gives the stored quote a hash no block has, which is

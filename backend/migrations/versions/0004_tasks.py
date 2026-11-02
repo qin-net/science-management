@@ -37,15 +37,15 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint("priority in ('low','normal','high')", name="ck_task_priority"),
         sa.CheckConstraint("char_length(title) between 1 and 200", name="ck_task_title_length"),
-        sa.CheckConstraint("char_length(description) <= 5000", name="ck_task_description_length"),
+        sa.CheckConstraint(
+            "char_length(description) <= 5000", name="ck_task_description_length"
+        ),
         sa.CheckConstraint(
             "(status = 'blocked') = (blocked_reason IS NOT NULL AND char_length(blocked_reason) "
             "between 1 and 500)",
             name="ck_task_blocked_reason",
         ),
-        sa.CheckConstraint(
-            "(status = 'done') = (completed_at IS NOT NULL)", name="ck_task_completed"
-        ),
+        sa.CheckConstraint("(status = 'done') = (completed_at IS NOT NULL)", name="ck_task_completed"),
         sa.ForeignKeyConstraint(["workspace_id"], ["workspaces.id"]),
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"]),
         sa.ForeignKeyConstraint(["assignee_id"], ["users.id"]),
