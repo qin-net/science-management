@@ -380,6 +380,8 @@ class OverviewTotals(BaseModel):
     papers: int
     open_tasks: int
     overdue_tasks: int
+    parsed_papers: int
+    noted_papers: int
 
 
 class OverviewProject(BaseModel):
@@ -388,6 +390,7 @@ class OverviewProject(BaseModel):
     status: str
     paper_count: int
     parsed_paper_count: int
+    noted_paper_count: int
     tasks: dict[str, int]
     last_activity_at: datetime | None
 
@@ -417,12 +420,22 @@ class OverviewEvent(BaseModel):
     created_at: datetime
 
 
+class OverviewDay(BaseModel):
+    date: date
+    total: int
+    papers: int
+    notes: int
+    tasks: int
+    projects: int
+
+
 class Overview(BaseModel):
     today: date
     totals: OverviewTotals
     projects: list[OverviewProject]
     my_tasks: OverviewMyTasks
     recent_events: list[OverviewEvent]
+    activity: list[OverviewDay]
 
 
 class AskRequest(Strict):

@@ -443,3 +443,18 @@ button.note-quote.jump {
   font-size: 1.6rem;
   font-weight: 600;
 }
+
+.bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 48px;
+  margin-bottom: 8px;
+}
+
+.bar {
+  flex: 1;
+  min-height: 2px;
+  background: var(--blue);
+  border-radius: 2px;
+}

@@ -1,7 +1,7 @@
 """Workspace overview for the home page (specs/005-p0-cockpit.md). Counts only, all from rows."""
 
 import uuid
-from datetime import datetime
+from datetime import UTC, date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, nulls_last, select
@@ -12,6 +12,7 @@ from researchos.db import get_db
 from researchos.models import (
     OPEN_TASK_STATUSES,
     TASK_STATUSES,
+    Note,
     Paper,
     PaperVersion,
     Project,
@@ -21,6 +22,7 @@ from researchos.models import (
 )
 from researchos.schemas import (
     Overview,
+    OverviewDay,
     OverviewEvent,
     OverviewMyTasks,
     OverviewProject,
@@ -32,6 +34,9 @@ from researchos.security import current_user, require_workspace
 router = APIRouter(prefix="/workspaces", tags=["overview"])
 
 LIST_LIMIT = 20
+ACTIVITY_DAYS = 14
+# Event type prefix -> the column it is counted under.
+ACTIVITY_KINDS = {"paper": "papers", "note": "notes", "task": "tasks", "project": "projects"}
 
 
 @router.get("/{workspace_id}/overview", response_model=Overview)
@@ -66,6 +71,13 @@ def overview(
                 Paper.workspace_id == workspace_id, PaperVersion.current_parse_job_id.is_not(None)
             )
             .group_by(Paper.project_id)
+        ).all()
+    )
+    noted: dict[uuid.UUID, int] = dict(
+        db.execute(
+            select(Note.project_id, func.count(func.distinct(Note.paper_id)))
+            .where(Note.workspace_id == workspace_id, Note.paper_id.is_not(None))
+            .group_by(Note.project_id)
         ).all()
     )
     by_status: dict[tuple[uuid.UUID, str], int] = {
@@ -106,6 +118,7 @@ def overview(
                 status=project.status,
                 paper_count=papers.get(project.id, 0),
                 parsed_paper_count=parsed.get(project.id, 0),
+                noted_paper_count=noted.get(project.id, 0),
                 tasks=counts,
                 last_activity_at=last_seen.get(project.id),
             )
@@ -118,6 +131,9 @@ def overview(
         papers=sum(papers.values()),
         open_tasks=sum(by_status.get((pid, s), 0) for pid in active for s in OPEN_TASK_STATUSES),
         overdue_tasks=sum(late.get(pid, 0) for pid in active),
+        # Papers are counted in every project, archived or not, like the paper total.
+        parsed_papers=sum(parsed.values()),
+        noted_papers=sum(noted.values()),
     )
 
     mine = [
@@ -168,8 +184,33 @@ def overview(
     ]
     return Overview(
         today=today,
+        activity=_activity(db, workspace_id, today),
         totals=totals,
         projects=cards,
         my_tasks=OverviewMyTasks(total=my_total, items=my_items),
         recent_events=recent,
     )
+
+
+def _activity(db: Session, workspace_id: uuid.UUID, today: date) -> list[OverviewDay]:
+    """Events per UTC day for the last ACTIVITY_DAYS days, one entry per day even when empty."""
+    first = today - timedelta(days=ACTIVITY_DAYS - 1)
+    start = datetime.combine(first, time.min, tzinfo=UTC)
+    day = func.date(func.timezone("UTC", ResearchEvent.created_at))
+    kind = func.split_part(ResearchEvent.event_type, ".", 1)
+    rows = db.execute(
+        select(day, kind, func.count())
+        .where(
+            ResearchEvent.workspace_id == workspace_id,
+            ResearchEvent.project_id.is_not(None),
+            ResearchEvent.created_at >= start,
+        )
+        .group_by(day, kind)
+    ).all()
+    counts: dict[tuple[date, str], int] = {(d, k): n for d, k, n in rows}
+    days = []
+    for offset in range(ACTIVITY_DAYS):
+        d = first + timedelta(days=offset)
+        by_kind = {column: counts.get((d, prefix), 0) for prefix, column in ACTIVITY_KINDS.items()}
+        days.append(OverviewDay(date=d, total=sum(by_kind.values()), **by_kind))
+    return days

@@ -230,6 +230,7 @@ export type OverviewProject = {
   status: "active" | "archived";
   paper_count: number;
   parsed_paper_count: number;
+  noted_paper_count: number;
   tasks: Record<TaskStatus | "overdue", number>;
   last_activity_at: string | null;
 };
@@ -254,6 +255,15 @@ export type OverviewEvent = {
   created_at: string;
 };
 
+export type OverviewDay = {
+  date: string;
+  total: number;
+  papers: number;
+  notes: number;
+  tasks: number;
+  projects: number;
+};
+
 export type Overview = {
   today: string;
   totals: {
@@ -262,10 +272,13 @@ export type Overview = {
     papers: number;
     open_tasks: number;
     overdue_tasks: number;
+    parsed_papers: number;
+    noted_papers: number;
   };
   projects: OverviewProject[];
   my_tasks: { total: number; items: OverviewTask[] };
   recent_events: OverviewEvent[];
+  activity: OverviewDay[];
 };
 
 export type Evidence = {

@@ -85,7 +85,7 @@ test("N1: the home page shows the stored counts, and a reload shows the same", a
   await expect(total(page, "open")).toHaveText("2");
   await expect(total(page, "overdue")).toHaveText("1");
   const line = page.getByTestId("project-counts");
-  await expect(line).toContainText("文献 1（已解析 1）");
+  await expect(line).toContainText("文献 1（已解析 1，有笔记 0）");
   await expect(line).toContainText("待办 2");
   await expect(line).toContainText("逾期 1");
 
@@ -188,4 +188,81 @@ test("N5: changing a task moves the numbers, and the definitions can be opened",
   await basis.getByText("统计口径").click();
   await expect(basis.getByText(/逾期：期限早于/)).toBeVisible();
   await expect(basis.getByText(/已解析：文献的当前版本/)).toBeVisible();
+});
+
+// --- specs/009: papers with notes, and the last 14 days of activity -----------------------
+
+const dayRow = (page: Page, date?: string) => {
+  const rows = page.getByTestId("activity-day");
+  return date ? rows.filter({ has: page.locator(`td:text-is("${date}")`) }) : rows.last();
+};
+
+test("U1+U2: noted papers and today's activity match what was done, and survive a reload", async ({
+  page,
+}) => {
+  await signUp(page);
+  await createProject(page, "Reading");
+  await page
+    .getByTestId("upload-input")
+    .setInputFiles(fixture("multipage.pdf"));
+  const row = page.getByTestId("paper-row").first();
+  await expect(row.getByTestId("job-status")).toHaveAttribute(
+    "data-status",
+    "succeeded",
+  );
+  await addTask(page, "第一个");
+  await addTask(page, "第二个");
+
+  await row.getByRole("link").click();
+  await expect(page.getByTestId("page-indicator")).toBeVisible();
+  await page.getByTestId("block").first().click();
+  const notes = page.getByTestId("notes-panel");
+  await notes.getByLabel("笔记内容").fill("读到这里");
+  await notes.getByTestId("annotate-selected").click();
+  await expect(notes.getByTestId("note")).toHaveCount(1);
+
+  await page.goto("/");
+  for (const reloaded of [false, true]) {
+    if (reloaded) await page.reload();
+    await expect(total(page, "papers")).toHaveText("1");
+    await expect(total(page, "parsed")).toHaveText("1");
+    await expect(total(page, "noted")).toHaveText("1");
+    await expect(page.getByTestId("project-counts")).toContainText(
+      "已解析 1，有笔记 1",
+    );
+
+    await expect(page.getByTestId("activity-day")).toHaveCount(14);
+    const today = dayRow(page);
+    // project.created, 2 x task.created, paper.imported, paper.parse_queued, paper.parsed,
+    // note.created. The parsing events are written by the worker, so they are counted too.
+    await expect(today.locator('[data-key="projects"]')).toHaveText("1");
+    await expect(today.locator('[data-key="tasks"]')).toHaveText("2");
+    await expect(today.locator('[data-key="notes"]')).toHaveText("1");
+    await expect(today.locator('[data-key="papers"]')).toHaveText("3");
+    await expect(today.locator('[data-key="total"]')).toHaveText("7");
+    await expect(page.getByTestId("activity-sum")).toHaveText("共 7 次操作");
+  }
+  await expect(page.locator("body")).not.toContainText(/NaN|undefined/);
+});
+
+test("U3: a new workspace shows fourteen empty days and no broken values", async ({
+  page,
+}) => {
+  await signUp(page);
+  await expect(page.getByTestId("activity-day")).toHaveCount(14);
+  await expect(page.getByTestId("activity-sum")).toContainText(
+    "共 0 次操作（这 14 天没有活动）",
+  );
+  await expect(page.locator("body")).not.toContainText(/NaN|undefined|null/);
+});
+
+test("U4: the definitions say a note is not a read, and that days are UTC", async ({
+  page,
+}) => {
+  await signUp(page);
+  const basis = page.getByTestId("overview-basis");
+  await basis.getByText("统计口径").click();
+  await expect(basis.getByText(/有笔记不等于读过/)).toBeVisible();
+  await expect(basis.getByText(/按 UTC 日期统计/)).toBeVisible();
+  await expect(basis.getByText(/不是人的阅读/)).toBeVisible();
 });

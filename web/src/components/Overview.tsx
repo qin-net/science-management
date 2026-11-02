@@ -23,6 +23,8 @@ export function Totals({ data }: { data: OverviewData }) {
   const cells: [string, string, number][] = [
     ["projects", "活跃项目", totals.active_projects],
     ["papers", "文献", totals.papers],
+    ["parsed", "已解析文献", totals.parsed_papers],
+    ["noted", "有笔记的文献", totals.noted_papers],
     ["open", "未完成任务", totals.open_tasks],
     ["overdue", "逾期任务", totals.overdue_tasks],
   ];
@@ -56,7 +58,7 @@ export function ProjectCounts({
   if (!project) return null;
   return (
     <span className="muted small" data-testid="project-counts">
-      文献 {project.paper_count}（已解析 {project.parsed_paper_count}）
+      文献 {project.paper_count}（已解析 {project.parsed_paper_count}，有笔记 {project.noted_paper_count}）
       {STATUSES.map(
         (status) => ` · ${STATUS_LABELS[status]} ${project.tasks[status]}`,
       )}
@@ -135,6 +137,54 @@ export function RecentEvents({ data }: { data: OverviewData }) {
   );
 }
 
+export function Activity({ data }: { data: OverviewData }) {
+  const days = data.activity;
+  const peak = Math.max(1, ...days.map((day) => day.total));
+  const sum = days.reduce((acc, day) => acc + day.total, 0);
+  return (
+    <section className="panel" data-testid="activity">
+      <h2>最近 14 天活动</h2>
+      <div className="bars" aria-hidden="true">
+        {days.map((day) => (
+          <div
+            className="bar"
+            key={day.date}
+            style={{ height: `${(day.total / peak) * 100}%` }}
+          />
+        ))}
+      </div>
+      <p className="small" data-testid="activity-sum">
+        共 {sum} 次操作
+        {sum === 0 && "（这 14 天没有活动）"}
+      </p>
+      <table className="small" data-testid="activity-table">
+        <thead>
+          <tr>
+            <th>日期（UTC）</th>
+            <th>合计</th>
+            <th>文献</th>
+            <th>笔记</th>
+            <th>任务</th>
+            <th>项目</th>
+          </tr>
+        </thead>
+        <tbody>
+          {days.map((day) => (
+            <tr key={day.date} data-testid="activity-day" data-date={day.date}>
+              <td>{day.date}</td>
+              <td data-key="total">{day.total}</td>
+              <td data-key="papers">{day.papers}</td>
+              <td data-key="notes">{day.notes}</td>
+              <td data-key="tasks">{day.tasks}</td>
+              <td data-key="projects">{day.projects}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
 export function Basis({ today }: { today: string }) {
   return (
     <details className="panel" data-testid="overview-basis">
@@ -149,6 +199,14 @@ export function Basis({ today }: { today: string }) {
           已解析：文献的当前版本有可读的解析结果。仅元数据、解析失败或还在解析的不算。
         </li>
         <li>文献数是导入的条数，不代表读过。</li>
+        <li>
+          有笔记的文献：至少有一条笔记或批注的文献，按文献去重，项目笔记不算。
+          有笔记不等于读过：系统不记录谁打开或读过哪篇文献。
+        </li>
+        <li>
+          最近 14 天活动：按 UTC 日期统计包含今天在内 14 天里属于项目的操作记录。
+          文献一类也包含解析成功、失败、取消等系统事件，反映的是处理活动，不是人的阅读。
+        </li>
         <li>
           未完成任务数和逾期任务数只含活跃项目；已归档项目的任务只在它自己的那一行里显示。
         </li>

@@ -2,6 +2,9 @@
 
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import text
+
+from researchos.db import get_engine
 from researchos.worker import Worker
 from tests.conftest import Account, add_member, sign_up
 from tests.pdf_samples import scanned_pdf, text_pdf
@@ -77,6 +80,8 @@ def test_p7_an_empty_workspace_is_all_zeros(owner: Account):
         "papers": 0,
         "open_tasks": 0,
         "overdue_tasks": 0,
+        "parsed_papers": 0,
+        "noted_papers": 0,
     }
     assert data["projects"] == [] and data["recent_events"] == []
     assert data["my_tasks"] == {"total": 0, "items": []}
@@ -125,6 +130,8 @@ def test_p2_counts_match_and_archived_projects_stay_out_of_the_totals(owner: Acc
         "papers": 3,
         "open_tasks": 3,  # todo, late, doing; nothing from the archived project
         "overdue_tasks": 1,
+        "parsed_papers": 0,  # uploaded but never parsed: the worker did not run
+        "noted_papers": 0,
     }
     assert [p["name"] for p in data["projects"]] == ["Old", "Live"]  # newest project first
     assert card(data, live)["paper_count"] == 2
@@ -271,3 +278,155 @@ def test_p9_the_overview_is_read_fresh_every_time(owner: Account):
     assert overview(owner)["totals"]["overdue_tasks"] == 1
     assert owner.client.delete(f"/api/v1/projects/{project}/tasks/{item['id']}").status_code == 204
     assert card(overview(owner), project)["tasks"]["doing"] == 0
+
+
+# --- R1-R5: papers that were processed or have notes (specs/009) -------------------------------
+
+
+def paper_note(account: Account, project_id: str, paper_id: str, body: str = "n") -> None:
+    response = account.client.post(
+        f"/api/v1/projects/{project_id}/notes", json={"body": body, "paper_id": paper_id}
+    )
+    assert response.status_code == 201, response.text
+
+
+def new_paper(account: Account, project_id: str, marker: str) -> str:
+    uploaded = account.upload(project_id, text_pdf(marker))
+    assert uploaded.status_code == 202, uploaded.text
+    return uploaded.json()["id"]
+
+
+def test_r1_noted_papers_are_counted_once_each_and_parsing_is_separate(owner: Account):
+    project = owner.new_project()["id"]
+    parsed = new_paper(owner, project, "parsed")
+    assert Worker().run_once() is True
+    unparsed = new_paper(owner, project, "unparsed")  # no worker run
+    new_paper(owner, project, "untouched")
+    paper_note(owner, project, parsed, "one")
+    paper_note(owner, project, parsed, "two")
+    paper_note(owner, project, unparsed, "three")
+
+    data = overview(owner)
+    assert card(data, project)["noted_paper_count"] == 2  # two papers, three notes
+    assert data["totals"]["noted_papers"] == 2
+    assert data["totals"]["parsed_papers"] == 1
+
+
+def test_r2_project_notes_do_not_count_as_noted_papers(owner: Account):
+    project = owner.new_project()["id"]
+    new_paper(owner, project, "a")
+    owner.client.post(f"/api/v1/projects/{project}/notes", json={"body": "about the project"})
+    data = overview(owner)
+    assert card(data, project)["noted_paper_count"] == 0
+    assert data["totals"]["noted_papers"] == 0
+
+
+def test_r3_archived_projects_still_count_their_papers(owner: Account):
+    project = owner.new_project()["id"]
+    paper = new_paper(owner, project, "a")
+    assert Worker().run_once() is True
+    paper_note(owner, project, paper)
+    archive(owner, project)
+    data = overview(owner)
+    assert data["totals"]["parsed_papers"] == 1 and data["totals"]["noted_papers"] == 1
+    assert card(data, project)["noted_paper_count"] == 1
+
+
+def test_r4_other_workspaces_are_not_counted(owner: Account):
+    stranger = sign_up()
+    theirs = stranger.new_project()["id"]
+    paper = new_paper(stranger, theirs, "theirs")
+    assert Worker().run_once() is True
+    paper_note(stranger, theirs, paper)
+    data = overview(owner)
+    assert data["totals"]["parsed_papers"] == 0 and data["totals"]["noted_papers"] == 0
+
+
+def test_r5_deleting_a_paper_takes_its_notes_out_of_the_count(owner: Account):
+    project = owner.new_project()["id"]
+    paper = new_paper(owner, project, "a")
+    assert Worker().run_once() is True  # a paper with a parse still queued cannot be deleted
+    paper_note(owner, project, paper)
+    assert overview(owner)["totals"]["noted_papers"] == 1
+    assert owner.client.delete(f"/api/v1/projects/{project}/papers/{paper}").status_code == 204
+    data = overview(owner)
+    assert data["totals"]["noted_papers"] == 0 and card(data, project)["noted_paper_count"] == 0
+
+
+# --- T1-T5: activity per day -------------------------------------------------------------------
+
+
+def test_t1_an_empty_workspace_still_has_fourteen_zero_days(owner: Account):
+    data = overview(owner)
+    days = data["activity"]
+    assert len(days) == 14
+    assert days[-1]["date"] == data["today"] == day(0)
+    assert [d["date"] for d in days] == [day(offset) for offset in range(-13, 1)]
+    assert all(
+        d[k] == 0 for d in days for k in ("total", "papers", "notes", "tasks", "projects")
+    )
+
+
+def test_t2_todays_events_are_split_by_kind(owner: Account):
+    project = owner.new_project()["id"]  # project.created
+    paper = new_paper(owner, project, "a")  # paper.imported, paper.parse_queued
+    paper_note(owner, project, paper)  # note.created
+    task(owner, project, "one")
+    task(owner, project, "two")  # task.created x2
+    today = overview(owner)["activity"][-1]
+    assert today["projects"] == 1 and today["papers"] == 2
+    assert today["notes"] == 1 and today["tasks"] == 2
+    assert today["total"] == 6
+
+
+def set_event_age(days_ago: int) -> None:
+    """Move every event of the test database to a given number of days ago, at midday UTC."""
+    with get_engine().begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE research_events SET created_at = "
+                "date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' "
+                "- make_interval(days => :d) + interval '12 hours'"
+            ),
+            {"d": days_ago},
+        )
+
+
+def test_t3_the_window_is_fourteen_utc_days(owner: Account):
+    project = owner.new_project()["id"]
+    for days_ago, expected_total in ((1, 1), (13, 1), (14, 0)):
+        set_event_age(days_ago)
+        days = overview(owner)["activity"]
+        assert sum(d["total"] for d in days) == expected_total, days_ago
+        if expected_total:
+            assert days[-1 - days_ago]["projects"] == 1
+    assert project
+
+
+def test_t3_events_just_either_side_of_utc_midnight_land_on_different_days(owner: Account):
+    owner.new_project()
+    with get_engine().begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE research_events SET created_at = "
+                "date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' "
+                "- interval '1 second'"
+            )
+        )
+    days = overview(owner)["activity"]
+    assert days[-2]["projects"] == 1 and days[-1]["projects"] == 0
+
+
+def test_t4_other_workspaces_events_are_not_counted(owner: Account):
+    stranger = sign_up()
+    stranger.new_project()
+    # `workspace.created` has no project and belongs to no counted kind, so it never shows up.
+    assert all(d["total"] == 0 for d in overview(owner)["activity"])
+
+
+def test_t5_activity_carries_numbers_and_no_words(owner: Account):
+    project = owner.new_project("SECRET-PROJECT")["id"]
+    task(owner, project, "SECRET-TASK")
+    days = overview(owner)["activity"]
+    assert "SECRET" not in str(days)
+    assert set(days[0]) == {"date", "total", "papers", "notes", "tasks", "projects"}

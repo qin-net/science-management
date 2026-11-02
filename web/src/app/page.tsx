@@ -4,6 +4,7 @@ import Link from "next/link";
 import { type FormEvent, useState } from "react";
 
 import {
+  Activity,
   Basis,
   MyTasks,
   ProjectCounts,
@@ -55,6 +56,7 @@ function Projects({ workspace }: { workspace: Workspace }) {
         <>
           {overview.data.projects.length > 0 && <Totals data={overview.data} />}
           <MyTasks data={overview.data} />
+          <Activity data={overview.data} />
           <RecentEvents data={overview.data} />
           <Basis today={overview.data.today} />
         </>
