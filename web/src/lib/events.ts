@@ -14,4 +14,7 @@ export const EVENT_LABELS: Record<string, string> = {
   "task.created": "新建任务",
   "task.updated": "修改任务",
   "task.deleted": "删除任务",
+  "meeting.created": "新建组会",
+  "meeting.updated": "修改组会",
+  "meeting.deleted": "删除组会",
 };

@@ -70,6 +70,44 @@ export function ProjectCounts({
   );
 }
 
+/** "还有 3 天 2 小时" style text from the server's whole seconds; the browser clock is not used. */
+export function countdown(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  if (days > 0) return `还有 ${days} 天 ${hours} 小时`;
+  if (minutes >= 60) return `还有 ${hours} 小时 ${minutes % 60} 分钟`;
+  if (minutes >= 1) return `还有 ${minutes} 分钟`;
+  return "不到 1 分钟";
+}
+
+export function NextMeeting({ data }: { data: OverviewData }) {
+  const meeting = data.next_meeting;
+  return (
+    <section className="panel" data-testid="next-meeting">
+      <h2>下一次组会</h2>
+      {meeting === null ? (
+        <div className="empty" data-testid="next-meeting-empty">
+          没有安排组会
+        </div>
+      ) : (
+        <div className="stack">
+          <div className="row-between">
+            <Link href={`/projects/${meeting.project_id}`} data-testid="next-meeting-title">
+              {meeting.title}
+            </Link>
+            <strong data-testid="next-meeting-countdown">{countdown(meeting.seconds_until)}</strong>
+          </div>
+          <span className="muted small" data-testid="next-meeting-detail">
+            {meeting.project_name} · {formatTime(meeting.starts_at)}
+            {meeting.location ? ` · ${meeting.location}` : ""}
+          </span>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function MyTasks({ data }: { data: OverviewData }) {
   const { total, items } = data.my_tasks;
   return (
@@ -166,6 +204,7 @@ export function Activity({ data }: { data: OverviewData }) {
             <th>笔记</th>
             <th>任务</th>
             <th>项目</th>
+            <th>组会</th>
           </tr>
         </thead>
         <tbody>
@@ -177,6 +216,7 @@ export function Activity({ data }: { data: OverviewData }) {
               <td data-key="notes">{day.notes}</td>
               <td data-key="tasks">{day.tasks}</td>
               <td data-key="projects">{day.projects}</td>
+              <td data-key="meetings">{day.meetings}</td>
             </tr>
           ))}
         </tbody>
@@ -206,6 +246,10 @@ export function Basis({ today }: { today: string }) {
         <li>
           最近 14 天活动：按 UTC 日期统计包含今天在内 14 天里属于项目的操作记录。
           文献一类也包含解析成功、失败、取消等系统事件，反映的是处理活动，不是人的阅读。
+        </li>
+        <li>
+          下一次组会：活跃项目里开始时间不早于服务器当前时刻、最早的一个。
+          倒计时按页面加载的时刻算，不会自动走，刷新才更新；已结束的和已归档项目的组会不计入。
         </li>
         <li>
           未完成任务数和逾期任务数只含活跃项目；已归档项目的任务只在它自己的那一行里显示。

@@ -363,7 +363,9 @@ def test_t1_an_empty_workspace_still_has_fourteen_zero_days(owner: Account):
     assert days[-1]["date"] == data["today"] == day(0)
     assert [d["date"] for d in days] == [day(offset) for offset in range(-13, 1)]
     assert all(
-        d[k] == 0 for d in days for k in ("total", "papers", "notes", "tasks", "projects")
+        d[k] == 0
+        for d in days
+        for k in ("total", "papers", "notes", "tasks", "projects", "meetings")
     )
 
 
@@ -429,4 +431,4 @@ def test_t5_activity_carries_numbers_and_no_words(owner: Account):
     task(owner, project, "SECRET-TASK")
     days = overview(owner)["activity"]
     assert "SECRET" not in str(days)
-    assert set(days[0]) == {"date", "total", "papers", "notes", "tasks", "projects"}
+    assert set(days[0]) == {"date", "total", "papers", "notes", "tasks", "projects", "meetings"}

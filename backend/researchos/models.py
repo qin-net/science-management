@@ -321,6 +321,32 @@ class Task(Base):
     updated_at: Mapped[datetime] = timestamp(onupdate=utcnow)
 
 
+class Meeting(Base):
+    """A scheduled group meeting (specs/010). `starts_at` is an absolute instant; how it is shown
+    is the browser's business."""
+
+    __tablename__ = "meetings"
+    __table_args__ = (
+        CheckConstraint("char_length(title) between 1 and 200", name="ck_meeting_title_length"),
+        CheckConstraint(
+            "location IS NULL OR char_length(location) between 1 and 200",
+            name="ck_meeting_location_length",
+        ),
+        Index("ix_meetings_project_start", "project_id", "starts_at"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    title: Mapped[str] = mapped_column(Text)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    location: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = timestamp()
+    updated_at: Mapped[datetime] = timestamp(onupdate=utcnow)
+
+
 class ResearchEvent(Base):
     """Append-only activity log; written in the same transaction as the change it records."""
 

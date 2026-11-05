@@ -7,6 +7,7 @@ import {
   Activity,
   Basis,
   MyTasks,
+  NextMeeting,
   ProjectCounts,
   RecentEvents,
   Totals,
@@ -55,6 +56,7 @@ function Projects({ workspace }: { workspace: Workspace }) {
       {overview.data && (
         <>
           {overview.data.projects.length > 0 && <Totals data={overview.data} />}
+          <NextMeeting data={overview.data} />
           <MyTasks data={overview.data} />
           <Activity data={overview.data} />
           <RecentEvents data={overview.data} />

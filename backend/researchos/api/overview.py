@@ -12,6 +12,7 @@ from researchos.db import get_db
 from researchos.models import (
     OPEN_TASK_STATUSES,
     TASK_STATUSES,
+    Meeting,
     Note,
     Paper,
     PaperVersion,
@@ -24,6 +25,7 @@ from researchos.schemas import (
     Overview,
     OverviewDay,
     OverviewEvent,
+    OverviewMeeting,
     OverviewMyTasks,
     OverviewProject,
     OverviewTask,
@@ -36,7 +38,13 @@ router = APIRouter(prefix="/workspaces", tags=["overview"])
 LIST_LIMIT = 20
 ACTIVITY_DAYS = 14
 # Event type prefix -> the column it is counted under.
-ACTIVITY_KINDS = {"paper": "papers", "note": "notes", "task": "tasks", "project": "projects"}
+ACTIVITY_KINDS = {
+    "paper": "papers",
+    "note": "notes",
+    "task": "tasks",
+    "project": "projects",
+    "meeting": "meetings",
+}
 
 
 @router.get("/{workspace_id}/overview", response_model=Overview)
@@ -185,6 +193,7 @@ def overview(
     return Overview(
         today=today,
         activity=_activity(db, workspace_id, today),
+        next_meeting=_next_meeting(db, workspace_id, active, names),
         totals=totals,
         projects=cards,
         my_tasks=OverviewMyTasks(total=my_total, items=my_items),
@@ -214,3 +223,35 @@ def _activity(db: Session, workspace_id: uuid.UUID, today: date) -> list[Overvie
         by_kind = {column: counts.get((d, prefix), 0) for prefix, column in ACTIVITY_KINDS.items()}
         days.append(OverviewDay(date=d, total=sum(by_kind.values()), **by_kind))
     return days
+
+
+def _next_meeting(
+    db: Session, workspace_id: uuid.UUID, active: set[uuid.UUID], names: dict[uuid.UUID, str]
+) -> OverviewMeeting | None:
+    """The earliest meeting that has not started, in an active project. One query reads the clock
+    and the row together, so `seconds_until` cannot be negative."""
+    if not active:
+        return None
+    now = func.now()
+    row = db.execute(
+        select(Meeting, func.floor(func.extract("epoch", Meeting.starts_at - now)))
+        .where(
+            Meeting.workspace_id == workspace_id,
+            Meeting.project_id.in_(active),
+            Meeting.starts_at >= now,
+        )
+        .order_by(Meeting.starts_at, Meeting.created_at, Meeting.id)
+        .limit(1)
+    ).first()
+    if row is None:
+        return None
+    meeting, seconds = row
+    return OverviewMeeting(
+        id=meeting.id,
+        title=meeting.title,
+        starts_at=meeting.starts_at,
+        location=meeting.location,
+        project_id=meeting.project_id,
+        project_name=names[meeting.project_id],
+        seconds_until=max(0, int(seconds)),
+    )

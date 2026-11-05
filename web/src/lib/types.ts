@@ -262,6 +262,34 @@ export type OverviewDay = {
   notes: number;
   tasks: number;
   projects: number;
+  meetings: number;
+};
+
+export type Meeting = {
+  id: string;
+  title: string;
+  starts_at: string;
+  location: string | null;
+  past: boolean;
+  created_by: string;
+  created_by_name: string;
+  version: number;
+  editable: boolean;
+  deletable: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type MeetingsPage = { items: Meeting[]; total: number };
+
+export type OverviewMeeting = {
+  id: string;
+  title: string;
+  starts_at: string;
+  location: string | null;
+  project_id: string;
+  project_name: string;
+  seconds_until: number;
 };
 
 export type Overview = {
@@ -279,6 +307,7 @@ export type Overview = {
   my_tasks: { total: number; items: OverviewTask[] };
   recent_events: OverviewEvent[];
   activity: OverviewDay[];
+  next_meeting: OverviewMeeting | null;
 };
 
 export type Evidence = {

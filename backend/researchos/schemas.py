@@ -1,7 +1,7 @@
 """Request/response models. Unknown fields are rejected so silent typos surface as 422."""
 
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
@@ -374,6 +374,83 @@ class TasksPage(BaseModel):
     counts: dict[str, int]
 
 
+def _place(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return _plain_text(value, limit=200, field="the location") or None
+
+
+def _aware(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("the time needs a time zone offset, for example +08:00 or Z")
+    if not 2000 <= value.astimezone(UTC).year <= 2100:
+        raise ValueError("the year must be between 2000 and 2100")
+    return value.astimezone(UTC)
+
+
+class MeetingCreate(Strict):
+    title: str
+    starts_at: datetime
+    location: str | None = None
+
+    _title_ok = field_validator("title")(lambda cls, v: _title(v))
+    _time_ok = field_validator("starts_at")(lambda cls, v: _aware(v))
+    _place_ok = field_validator("location")(lambda cls, v: _place(v))
+
+
+class MeetingPatch(Strict):
+    expected_version: int = Field(ge=1)
+    title: str | None = None
+    starts_at: datetime | None = None
+    location: str | None = None
+
+    @field_validator("title")
+    @classmethod
+    def _title_ok(cls, v: str | None) -> str | None:
+        if v is None:
+            raise ValueError("the title cannot be cleared")
+        return _title(v)
+
+    @field_validator("starts_at")
+    @classmethod
+    def _time_ok(cls, v: datetime | None) -> datetime:
+        if v is None:
+            raise ValueError("the time cannot be cleared")
+        return _aware(v)
+
+    _place_ok = field_validator("location")(lambda cls, v: _place(v))
+
+
+class MeetingOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    starts_at: datetime
+    location: str | None
+    past: bool
+    created_by: uuid.UUID
+    created_by_name: str
+    version: int
+    editable: bool
+    deletable: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class MeetingsPage(BaseModel):
+    items: list[MeetingOut]
+    total: int
+
+
+class OverviewMeeting(BaseModel):
+    id: uuid.UUID
+    title: str
+    starts_at: datetime
+    location: str | None
+    project_id: uuid.UUID
+    project_name: str
+    seconds_until: int
+
+
 class OverviewTotals(BaseModel):
     active_projects: int
     archived_projects: int
@@ -427,6 +504,7 @@ class OverviewDay(BaseModel):
     notes: int
     tasks: int
     projects: int
+    meetings: int
 
 
 class Overview(BaseModel):
@@ -436,6 +514,7 @@ class Overview(BaseModel):
     my_tasks: OverviewMyTasks
     recent_events: list[OverviewEvent]
     activity: list[OverviewDay]
+    next_meeting: OverviewMeeting | None
 
 
 class AskRequest(Strict):

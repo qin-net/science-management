@@ -8,6 +8,7 @@ import { AskPanel } from "@/components/AskPanel";
 import { LiteratureSearch } from "@/components/LiteratureSearch";
 import { Notes } from "@/components/Notes";
 import { ExportCitations } from "@/components/ExportCitations";
+import { Meetings } from "@/components/Meetings";
 import { Tasks } from "@/components/Tasks";
 import {
   ErrorNotice,
@@ -475,6 +476,10 @@ export default function ProjectPage() {
                   project={project.data}
                   canWrite={canWrite}
                   onPapersChanged={() => setNotesRefresh((value) => value + 1)}
+                />
+                <Meetings
+                  projectId={project.data.id}
+                  canWrite={canWrite && project.data.status === "active"}
                 />
                 <Tasks
                   projectId={project.data.id}
