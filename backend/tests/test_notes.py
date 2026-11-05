@@ -529,3 +529,173 @@ def test_listing_filters_by_paper_orders_newest_first_and_pages(owner: Account, 
     assert [n["body"] for n in page["items"]] == ["n0"] and page["total"] == 5
     assert owner.client.get(api(project_id, "/notes"), params={"limit": 0}).status_code == 422
     assert owner.client.get(api(project_id, "/notes"), params={"limit": 201}).status_code == 422
+
+
+# --- M1-M9: ranges inside a block (specs/011 section 4) -------------------------------------
+
+
+def ranged(
+    account: Account, project_id: str, paper_id: str, version_id: str, block, start, end, body=""
+):
+    return account.client.post(
+        api(project_id, "/notes"),
+        json={
+            "body": body,
+            "paper_id": paper_id,
+            "anchor": {
+                "version_id": version_id,
+                "block_id": block["id"],
+                "start": start,
+                "end": end,
+            },
+        },
+    )
+
+
+def marker_block(blocks):
+    block = next(b for b in blocks if "Marker text" in b["text"])
+    return block, block["text"].index("Marker")
+
+
+def test_m1_a_range_is_cut_from_the_block_by_the_server(owner: Account, setup):
+    project_id, paper_id, version_id, blocks = setup
+    block = next(b for b in blocks if "Marker text" in b["text"])
+    # A word away from the start, so a quote that merely runs from 0 to `end` is caught too.
+    at = block["text"].index("text")
+    response = ranged(owner, project_id, paper_id, version_id, block, at, at + 4, "两个词")
+    assert response.status_code == 201, response.text
+    note = response.json()
+    anchor = note["anchor"]
+    assert note["kind"] == "annotation"
+    assert anchor["status"] == "located" and anchor["block_id"] == block["id"]
+    assert anchor["range"] == [at, at + 4]
+    assert anchor["quote"] == block["text"][at : at + 4] == "text"
+    assert anchor["text"] == block["text"], "the whole block is still kept for re-locating"
+    assert anchor["page_no"] == block["page_no"]
+    with get_engine().connect() as conn:
+        stored = conn.execute(text("SELECT anchor FROM notes")).scalar_one()
+    assert stored["range"] == [at, at + 4] and stored["quote"] == "text"
+    assert stored["text"] == block["text"]
+
+
+@pytest.mark.parametrize(
+    "start,end",
+    [
+        (0, 99999),  # past the end
+        (4, 4),  # empty
+        (6, 2),  # backwards
+        (-1, 3),  # negative
+    ],
+)
+def test_m2_a_range_that_does_not_fit_is_refused(owner: Account, setup, start, end):
+    project_id, paper_id, version_id, blocks = setup
+    response = ranged(owner, project_id, paper_id, version_id, blocks[0], start, end)
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "invalid_anchor"
+    assert count_notes() == 0
+
+
+def test_m2_half_a_range_or_a_non_integer_is_refused(owner: Account, setup):
+    project_id, paper_id, version_id, blocks = setup
+    base = {"version_id": version_id, "block_id": blocks[0]["id"]}
+    for anchor in (
+        {**base, "start": 1},
+        {**base, "end": 2},
+        {**base, "start": 1.5, "end": 3},
+        {**base, "start": "1", "end": 3},
+        {**base, "start": True, "end": 3},
+    ):
+        response = owner.client.post(
+            api(project_id, "/notes"),
+            json={"body": "x", "paper_id": paper_id, "anchor": anchor},
+        )
+        assert response.status_code == 422, anchor
+    assert count_notes() == 0
+
+
+def test_m3_the_quote_cannot_be_supplied_by_the_client(owner: Account, setup):
+    project_id, paper_id, version_id, blocks = setup
+    block, at = marker_block(blocks)
+    for forged in (
+        {"quote": "The paper says something else"},
+        {"range": [0, 4], "quote": "nope"},
+    ):
+        response = owner.client.post(
+            api(project_id, "/notes"),
+            json={
+                "body": "x",
+                "paper_id": paper_id,
+                "anchor": {
+                    "version_id": version_id,
+                    "block_id": block["id"],
+                    "start": at,
+                    "end": at + 6,
+                    **forged,
+                },
+            },
+        )
+        assert response.status_code == 422, forged
+    assert count_notes() == 0
+
+
+def test_m4_the_whole_block_is_a_valid_range(owner: Account, setup):
+    project_id, paper_id, version_id, blocks = setup
+    block = blocks[0]
+    response = ranged(owner, project_id, paper_id, version_id, block, 0, len(block["text"]))
+    assert response.status_code == 201, response.text
+    anchor = response.json()["anchor"]
+    assert anchor["quote"] == block["text"] and anchor["range"] == [0, len(block["text"])]
+
+
+def test_m5_a_reparse_that_keeps_the_block_keeps_the_range(owner: Account, setup):
+    project_id, paper_id, version_id, blocks = setup
+    block, at = marker_block(blocks)
+    ranged(owner, project_id, paper_id, version_id, block, at, at + 6)
+    reparse(owner, project_id, paper_id, version_id)
+    anchor = owner.client.get(api(project_id, "/notes")).json()["items"][0]["anchor"]
+    assert anchor["status"] == "located" and anchor["range"] == [at, at + 6]
+    assert anchor["quote"] == "Marker"
+
+
+def test_m6_a_reparse_that_changes_the_block_makes_the_range_stale(owner: Account, setup):
+    project_id, paper_id, version_id, blocks = setup
+    block, at = marker_block(blocks)
+    ranged(owner, project_id, paper_id, version_id, block, at, at + 6)
+    with get_engine().begin() as conn:
+        conn.execute(text("UPDATE notes SET anchor = jsonb_set(anchor, '{content_hash}', '\"x\"')"))
+    anchor = owner.client.get(api(project_id, "/notes")).json()["items"][0]["anchor"]
+    assert anchor["status"] == "stale" and anchor["block_id"] is None
+    assert anchor["range"] == [at, at + 6] and anchor["quote"] == "Marker"
+
+
+def test_m7_older_whole_block_anchors_read_as_no_range(owner: Account, setup):
+    project_id, paper_id, version_id, blocks = setup
+    annotate(owner, project_id, paper_id, version_id, blocks[0]["id"], "whole block")
+    anchor = owner.client.get(api(project_id, "/notes")).json()["items"][0]["anchor"]
+    assert anchor["range"] is None and anchor["quote"] is None
+    assert anchor["text"] == blocks[0]["text"] and anchor["status"] == "located"
+
+
+def test_m8_editing_the_body_leaves_the_range_alone(owner: Account, setup):
+    project_id, paper_id, version_id, blocks = setup
+    block, at = marker_block(blocks)
+    note = ranged(owner, project_id, paper_id, version_id, block, at, at + 6).json()
+    edited = owner.client.patch(
+        api(project_id, f"/notes/{note['id']}"),
+        json={"body": "new words", "expected_version": note["version"]},
+    )
+    assert edited.status_code == 200, edited.text
+    anchor = edited.json()["anchor"]
+    assert edited.json()["version"] == 2
+    assert anchor["range"] == [at, at + 6] and anchor["quote"] == "Marker"
+
+
+def test_m9_events_hold_no_quoted_words(owner: Account, setup):
+    project_id, paper_id, version_id, blocks = setup
+    block, at = marker_block(blocks)
+    ranged(owner, project_id, paper_id, version_id, block, at, at + 6, "SECRET")
+    with get_engine().connect() as conn:
+        rows = conn.execute(
+            text("SELECT payload FROM research_events WHERE event_type = 'note.created'")
+        ).all()
+    assert rows and "SECRET" not in str(rows) and "Marker" not in str(rows)

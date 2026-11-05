@@ -4,7 +4,14 @@ import uuid
 from datetime import UTC, date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    StrictInt,
+    field_validator,
+)
 
 
 class Strict(BaseModel):
@@ -207,6 +214,10 @@ def _clean_note_body(value: str) -> str:
 class NoteAnchorIn(Strict):
     version_id: uuid.UUID
     block_id: uuid.UUID
+    # Character offsets into the block's own text, left-closed right-open (specs/011). Strict,
+    # so "1" is refused rather than turned into 1; whether they fit is checked against the block.
+    start: StrictInt | None = None
+    end: StrictInt | None = None
 
 
 class NoteCreate(Strict):
@@ -239,6 +250,8 @@ class NoteAnchorOut(BaseModel):
     block_id: uuid.UUID | None
     bbox: list[float] | None
     granularity: str
+    range: list[int] | None = None
+    quote: str | None = None
 
 
 class NoteOut(BaseModel):

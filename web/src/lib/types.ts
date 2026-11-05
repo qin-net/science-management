@@ -169,6 +169,10 @@ export type NoteAnchor = {
   block_id: string | null;
   bbox: [number, number, number, number] | null;
   granularity: "block" | "page";
+  /** Character offsets into `text`, when the note marks part of the block (specs/011). */
+  range: [number, number] | null;
+  /** The text of that range, cut by the server; null for a whole-block note. */
+  quote: string | null;
 };
 
 export type Note = {

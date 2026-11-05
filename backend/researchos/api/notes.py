@@ -93,6 +93,9 @@ def _render(
                 block_id=located.id if located else None,
                 bbox=located.bbox if located else None,
                 granularity=located.granularity if located else note.anchor["granularity"],
+                # Older anchors (specs/003) carry neither, and keep meaning "the whole block".
+                range=note.anchor.get("range"),
+                quote=note.anchor.get("quote"),
             )
         mine = note.author_id == user.id
         out.append(
@@ -124,7 +127,12 @@ def _load_note(db: Session, project_id: uuid.UUID, note_id: uuid.UUID, lock: boo
 
 
 def _anchor_snapshot(
-    db: Session, project: Project, paper: Paper, version_id: uuid.UUID, block_id: uuid.UUID
+    db: Session,
+    project: Project,
+    paper: Paper,
+    version_id: uuid.UUID,
+    block_id: uuid.UUID,
+    requested_range: tuple[int, int] | None = None,
 ) -> tuple[PaperVersion, dict]:
     version = db.scalar(
         select(PaperVersion).where(
@@ -150,7 +158,16 @@ def _anchor_snapshot(
             "invalid_anchor",
             "the block is not part of the current parse of this version",
         )
-    return version, {
+    if requested_range is not None:
+        start, end = requested_range
+        if not 0 <= start < end <= len(block.text):
+            raise ApiError(
+                422,
+                "invalid_anchor",
+                "the range does not fit inside the block's text",
+                {"length": len(block.text)},
+            )
+    snapshot = {
         "page_no": block.page_no,
         "text": block.text,
         "content_hash": block.content_hash,
@@ -158,6 +175,12 @@ def _anchor_snapshot(
         "granularity": block.granularity,
         "block_seq": block.seq,
     }
+    if requested_range is not None:
+        start, end = requested_range
+        # The quote is cut here, from the block the server just read; a client cannot supply it.
+        snapshot["range"] = [start, end]
+        snapshot["quote"] = block.text[start:end]
+    return version, snapshot
 
 
 @router.get("/notes", response_model=NotesPage)
@@ -212,8 +235,13 @@ def create_note(
     version_id = None
     anchor = None
     if payload.anchor is not None and paper is not None:
+        wanted = None
+        if (payload.anchor.start is None) != (payload.anchor.end is None):
+            raise ApiError(422, "invalid_anchor", "start and end must be given together")
+        if payload.anchor.start is not None and payload.anchor.end is not None:
+            wanted = (payload.anchor.start, payload.anchor.end)
         version, anchor = _anchor_snapshot(
-            db, project, paper, payload.anchor.version_id, payload.anchor.block_id
+            db, project, paper, payload.anchor.version_id, payload.anchor.block_id, wanted
         )
         version_id = version.id
     note = Note(

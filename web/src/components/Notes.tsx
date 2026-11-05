@@ -14,6 +14,10 @@ const KIND_LABELS = { project: "项目笔记", paper: "无来源", annotation: "
 // or version to anchor to, and the server checks both again.
 export type AnnotationTarget = { versionId: string; blockId: string; pageNo: number };
 
+// A selection inside one block (specs/011). Offsets are characters of that block's own text, and
+// the server cuts the quote from the block itself.
+export type TextSelection = AnnotationTarget & { start: number; end: number };
+
 function Anchor({
   note,
   currentVersionNo,
@@ -29,19 +33,25 @@ function Anchor({
   }
   const where = `第 ${anchor.page_no} 页 · v${anchor.version_no}`;
   const older = currentVersionNo !== null && anchor.version_no !== currentVersionNo;
+  // A ranged note quotes only its range; a whole-block one still quotes the whole block.
+  const quote = anchor.quote ?? anchor.text;
   return (
     <div className="stack" data-testid="note-anchor" data-status={anchor.status}>
       <span className="muted small" data-testid="note-where">
         {where}
         {older ? "（来自旧版本）" : ""}
+        {anchor.range ? " · 部分文字" : ""}
       </span>
       {anchor.status === "located" && onJump ? (
         <button className="note-quote jump" data-testid="note-jump" onClick={() => onJump(note)}>
-          {anchor.text}
+          {quote}
         </button>
       ) : (
-        <span className={`note-quote ${anchor.status === "located" ? "" : "stale"}`}>
-          {anchor.text}
+        <span
+          className={`note-quote ${anchor.status === "located" ? "" : "stale"}`}
+          data-testid="note-quote"
+        >
+          {quote}
         </span>
       )}
       {anchor.status === "stale" && (
@@ -195,8 +205,11 @@ export function Notes({
   paperId,
   canWrite,
   target,
+  selection = null,
   currentVersionNo = null,
   onJump,
+  onAnnotated,
+  onNotesChanged,
   refresh = 0,
 }: {
   projectId: string;
@@ -205,8 +218,14 @@ export function Notes({
   canWrite: boolean;
   /** The block currently selected in the reader; enables "annotate the selected block". */
   target?: AnnotationTarget | null;
+  /** Text selected inside that block; enables "annotate the selected text" (specs/011). */
+  selection?: TextSelection | null;
   currentVersionNo?: number | null;
   onJump?: (note: Note) => void;
+  /** Called once a ranged note exists, so the reader can drop the stale selection. */
+  onAnnotated?: () => void;
+  /** Called after any change, for the reader that draws the marks from the same list. */
+  onNotesChanged?: () => void;
   /** Changes when something outside (a deleted paper) may have removed notes. */
   refresh?: number;
 }) {
@@ -219,7 +238,7 @@ export function Notes({
   const [error, setError] = useState<ApiFailure | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function create(anchored: boolean) {
+  async function create(anchored: "block" | "selection" | false) {
     setBusy(true);
     setError(null);
     try {
@@ -227,12 +246,23 @@ export function Notes({
       if (paperId) {
         payload.paper_id = paperId;
       }
-      if (anchored && target) {
+      if (anchored === "selection" && selection) {
+        payload.anchor = {
+          version_id: selection.versionId,
+          block_id: selection.blockId,
+          start: selection.start,
+          end: selection.end,
+        };
+      } else if (anchored === "block" && target) {
         payload.anchor = { version_id: target.versionId, block_id: target.blockId };
       }
       await sendJson(`/projects/${projectId}/notes`, "POST", payload);
       setBody("");
       await notes.reload();
+      onNotesChanged?.();
+      if (anchored === "selection") {
+        onAnnotated?.();
+      }
     } catch (failure) {
       setError(failure as ApiFailure);
     } finally {
@@ -265,12 +295,22 @@ export function Notes({
             <button className="primary" disabled={busy || body.trim() === ""}>
               {paperId ? "添加文献笔记（无来源）" : "添加项目笔记"}
             </button>
+            {selection && (
+              <button
+                type="button"
+                data-testid="annotate-selection"
+                disabled={busy}
+                onClick={() => void create("selection")}
+              >
+                批注所选文字（第 {selection.pageNo} 页）
+              </button>
+            )}
             {target && (
               <button
                 type="button"
                 data-testid="annotate-selected"
                 disabled={busy}
-                onClick={() => void create(true)}
+                onClick={() => void create("block")}
               >
                 批注所选文本块（第 {target.pageNo} 页）
               </button>
@@ -295,7 +335,10 @@ export function Notes({
             showPaper={!paperId}
             currentVersionNo={currentVersionNo}
             onJump={onJump}
-            onChanged={notes.reload}
+            onChanged={async () => {
+              await notes.reload();
+              onNotesChanged?.();
+            }}
           />
         ))}
       </ul>

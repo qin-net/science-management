@@ -17,7 +17,16 @@ import {
   Loading,
 } from "@/components/ui";
 import { api, ApiFailure, sendJson, uploadPdf } from "@/lib/api";
-import type { Block, BlocksPage, Note, Paper, Project, Version, Workspace } from "@/lib/types";
+import type {
+  Block,
+  BlocksPage,
+  Note,
+  NotesPage,
+  Paper,
+  Project,
+  Version,
+  Workspace,
+} from "@/lib/types";
 import { useResource } from "@/lib/useResource";
 
 const BLOCK_PAGE_SIZE = 2000;
@@ -37,14 +46,74 @@ async function loadAllBlocks(base: string): Promise<BlocksPage> {
   return { ...first, items };
 }
 
+export type BlockSelection = { block: Block; start: number; end: number };
+
+/** Where a point sits in the element's text, counting every text node in order. */
+function offsetOf(element: Element, node: Node, offset: number): number | null {
+  if (!element.contains(node)) {
+    return null;
+  }
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  let total = 0;
+  for (let current = walker.nextNode(); current; current = walker.nextNode()) {
+    if (current === node) {
+      return node.nodeType === Node.TEXT_NODE ? total + offset : null;
+    }
+    total += current.textContent?.length ?? 0;
+  }
+  return null;
+}
+
+/** Character offsets of a selection inside one block, or null when it is not one block. */
+function offsetsIn(block: Block, range: Range): [number, number] | null {
+  const element = document.querySelector(`[data-block-id="${block.id}"]`);
+  if (!element) {
+    return null;
+  }
+  const a = offsetOf(element, range.startContainer, range.startOffset);
+  const b = offsetOf(element, range.endContainer, range.endOffset);
+  if (a === null || b === null) {
+    return null;
+  }
+  const start = Math.min(a, b);
+  const end = Math.max(a, b);
+  // The element's text is exactly block.text, so these are the offsets the server checks.
+  return end > start && end <= block.text.length ? [start, end] : null;
+}
+
+/** Splits the block's text around its annotation ranges; every character is still plain text. */
+function marked(block: Block, ranges: { start: number; end: number }[]) {
+  const sorted = [...ranges].sort((a, b) => a.start - b.start);
+  const parts: { text: string; marked: boolean }[] = [];
+  let at = 0;
+  for (const { start, end } of sorted) {
+    if (start < at || end > block.text.length) {
+      continue;
+    }
+    if (start > at) {
+      parts.push({ text: block.text.slice(at, start), marked: false });
+    }
+    parts.push({ text: block.text.slice(start, end), marked: true });
+    at = end;
+  }
+  if (at < block.text.length) {
+    parts.push({ text: block.text.slice(at), marked: false });
+  }
+  return parts;
+}
+
 function BlockList({
   blocks,
   selected,
+  annotations,
   onSelect,
+  onRange,
 }: {
   blocks: Block[];
   selected: Block | null;
+  annotations: { blockId: string; start: number; end: number }[];
   onSelect: (block: Block) => void;
+  onRange: (selection: BlockSelection | null) => void;
 }) {
   const pages = useMemo(() => {
     const grouped = new Map<number, Block[]>();
@@ -61,16 +130,44 @@ function BlockList({
           <div className="block-page-label">第 {page} 页</div>
           {items.map((block) =>
             block.text ? (
-              <button
+              <div
                 key={block.id}
+                role="button"
+                tabIndex={0}
                 data-testid="block"
                 data-page={block.page_no}
                 data-located={block.bbox !== null}
+                data-block-id={block.id}
                 className={`block ${selected?.id === block.id ? "selected" : ""}`}
                 onClick={() => onSelect(block)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    onSelect(block);
+                  }
+                }}
+                onMouseUp={() => {
+                  const selection = window.getSelection();
+                  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+                    onRange(null);
+                    return;
+                  }
+                  const offsets = offsetsIn(block, selection.getRangeAt(0));
+                  onRange(offsets ? { block, start: offsets[0], end: offsets[1] } : null);
+                }}
               >
-                {block.text}
-              </button>
+                {marked(
+                  block,
+                  annotations.filter((item) => item.blockId === block.id),
+                ).map((part, index) =>
+                  part.marked ? (
+                    <mark key={index} data-testid="block-mark">
+                      {part.text}
+                    </mark>
+                  ) : (
+                    <span key={index}>{part.text}</span>
+                  ),
+                )}
+              </div>
             ) : (
               <p className="muted small" key={block.id} data-testid="block-empty-page">
                 这一页没有可提取的文本（可能是扫描页）。
@@ -89,16 +186,35 @@ function Blocks({
   version,
   selected,
   focusId,
+  notes,
   onSelect,
+  onRange,
 }: {
   base: string;
   paper: Paper;
   version: Version;
   selected: Block | null;
   focusId: string | null;
+  notes: Note[];
   onSelect: (block: Block) => void;
+  onRange: (selection: BlockSelection | null) => void;
 }) {
   const job = version.id === paper.current_version?.id ? paper.parse_job : null;
+  // Only located, ranged anchors of the version on screen can be drawn; everything else would
+  // be a guess about where the text went.
+  const annotations = notes.flatMap((note) => {
+    const anchor = note.anchor;
+    if (
+      !anchor ||
+      anchor.status !== "located" ||
+      !anchor.block_id ||
+      !anchor.range ||
+      anchor.version_id !== version.id
+    ) {
+      return [];
+    }
+    return [{ blockId: anchor.block_id, start: anchor.range[0], end: anchor.range[1] }];
+  });
   const blocks = useResource(
     () => loadAllBlocks(`${base}/versions/${version.id}`),
     `${version.id}:${version.current_parse_job_id}`,
@@ -139,7 +255,13 @@ function Blocks({
           这个文本块只有页级定位，无法在页面上标出准确位置。
         </div>
       )}
-      <BlockList blocks={blocks.data?.items ?? []} selected={selected} onSelect={onSelect} />
+      <BlockList
+        blocks={blocks.data?.items ?? []}
+        selected={selected}
+        annotations={annotations}
+        onSelect={onSelect}
+        onRange={onRange}
+      />
     </>
   );
 }
@@ -385,11 +507,17 @@ export default function ReaderPage() {
   const [chosenVersion, setChosenVersion] = useState<Version | null>(null);
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Block | null>(null);
+  const [range, setRange] = useState<BlockSelection | null>(null);
   const [actionError, setActionError] = useState<ApiFailure | null>(null);
   const [notesRefresh, setNotesRefresh] = useState(0);
   const versions = useResource(
     () => api<Version[]>(`${base}/versions`),
     `${base}:${paper.data?.current_version?.id ?? "none"}`,
+  );
+  // The same notes the panel below shows: one read, so the marks and the list never disagree.
+  const notes = useResource(
+    () => api<NotesPage>(`/projects/${projectId}/notes?paper_id=${paperId}&limit=200`),
+    `${projectId}:${paperId}:${notesRefresh}`,
   );
 
   const role = workspaces.data?.find((item) => item.id === project.data?.workspace_id)?.role;
@@ -494,7 +622,9 @@ export default function ReaderPage() {
               version={version}
               selected={selected}
               focusId={focusId}
+              notes={notes.data?.items ?? []}
               onSelect={pick}
+              onRange={setRange}
             />
           </aside>
           <main className="reader-pane center">
@@ -562,6 +692,19 @@ export default function ReaderPage() {
                   ? { versionId: version.id, blockId: selected.id, pageNo: selected.page_no }
                   : null
               }
+              selection={
+                range
+                  ? {
+                      versionId: version.id,
+                      blockId: range.block.id,
+                      pageNo: range.block.page_no,
+                      start: range.start,
+                      end: range.end,
+                    }
+                  : null
+              }
+              onAnnotated={() => setRange(null)}
+              onNotesChanged={() => setNotesRefresh((count) => count + 1)}
               currentVersionNo={version.version_no}
               onJump={(note) => jumpTo(note, versions.data)}
             />

@@ -359,6 +359,13 @@ button.danger {
   border-color: var(--blue);
 }
 
+/* A marked annotation range inside a block: the surrounding text stays ordinary text. */
+.block mark {
+  background: rgba(250, 204, 21, 0.35);
+  color: inherit;
+  border-radius: 2px;
+}
+
 .meta-table {
   display: grid;
   gap: 8px;
