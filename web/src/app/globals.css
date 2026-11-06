@@ -465,3 +465,20 @@ button.note-quote.jump {
   background: var(--blue);
   border-radius: 2px;
 }
+
+/* A machine translation under its block: plain text, set apart from the source. */
+.block-translation {
+  margin: 0 8px 6px 16px;
+  padding: 3px 8px;
+  border-left: 2px solid var(--muted);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.block-translation-label {
+  margin-right: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}

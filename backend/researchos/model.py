@@ -71,8 +71,8 @@ class RawAnswer(BaseModel):
 
 
 @dataclass
-class ModelResult:
-    answer: RawAnswer
+class ModelResult[Parsed: BaseModel]:
+    answer: Parsed
     model: str
     input_tokens: int | None
     output_tokens: int | None
@@ -183,14 +183,32 @@ def _tokens(usage, name: str) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def ask(settings: Settings, user_message: str) -> ModelResult:
+def ask(settings: Settings, user_message: str) -> ModelResult[RawAnswer]:
+    """A question or a summary: segments with the numbers of the blocks behind them."""
+    return call(
+        settings,
+        system=SYSTEM_PROMPT,
+        user_message=user_message,
+        schema=ANSWER_SCHEMA,
+        parse=RawAnswer,
+    )
+
+
+def call[Parsed: BaseModel](
+    settings: Settings,
+    *,
+    system: str,
+    user_message: str,
+    schema: dict,
+    parse: type[Parsed],
+) -> ModelResult[Parsed]:
     """One request, no retry: every retry would be paid for."""
     body = {
         "model": settings.model_name,
         "max_tokens": settings.model_max_output_tokens,
-        "system": SYSTEM_PROMPT,
+        "system": system,
         "messages": [{"role": "user", "content": user_message}],
-        "output_config": {"format": {"type": "json_schema", "schema": ANSWER_SCHEMA}},
+        "output_config": {"format": {"type": "json_schema", "schema": schema}},
     }
     headers = {
         "x-api-key": settings.anthropic_api_key,
@@ -267,7 +285,7 @@ def ask(settings: Settings, user_message: str) -> ModelResult:
     if first is None or not isinstance(first.get("text"), str):
         raise bad
     try:
-        answer = RawAnswer.model_validate(json.loads(first["text"]))
+        answer = parse.model_validate(json.loads(first["text"]))
     except (ValueError, ValidationError):
         raise bad from None
     usage = payload.get("usage")

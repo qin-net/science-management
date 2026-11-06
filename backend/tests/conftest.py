@@ -81,6 +81,10 @@ os.environ.update(
     # The language model is a local fake (tests/fake_model.py), never the real API.
     ANTHROPIC_API_KEY="test-key-not-a-secret",
     ANTHROPIC_BASE_URL=MODEL.url,
+    # Pinned so a developer's own model settings in .env cannot change what the tests expect.
+    MODEL_NAME="claude-sonnet-5-5",
+    MODEL_MAX_OUTPUT_TOKENS="4096",
+    MODEL_CONTEXT_CHARS="120000",
     MODEL_USER_PER_MINUTE="1000",
     MODEL_USER_PER_DAY="1000",
     MODEL_TIMEOUT_SECONDS="5",

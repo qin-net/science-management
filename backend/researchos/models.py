@@ -347,6 +347,30 @@ class Meeting(Base):
     updated_at: Mapped[datetime] = timestamp(onupdate=utcnow)
 
 
+class BlockTranslation(Base):
+    """A machine translation of one block's text (specs/012). Keyed by the text's hash, not the
+    block, so a re-parse or a new version with the same words reuses it instead of paying again."""
+
+    __tablename__ = "block_translations"
+    __table_args__ = (
+        UniqueConstraint(
+            "paper_id", "content_hash", "language", name="uq_translation_paper_hash_language"
+        ),
+        CheckConstraint("language in ('zh','en')", name="ck_translation_language"),
+    )
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    workspace_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    paper_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("papers.id"))
+    content_hash: Mapped[str] = mapped_column(String(71))
+    language: Mapped[str] = mapped_column(String(8))
+    text: Mapped[str] = mapped_column(Text)
+    model: Mapped[str] = mapped_column(String(64))
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = timestamp()
+
+
 class ResearchEvent(Base):
     """Append-only activity log; written in the same transaction as the change it records."""
 
@@ -395,7 +419,7 @@ class ModelCall(Base):
 
     __tablename__ = "model_calls"
     __table_args__ = (
-        CheckConstraint("kind in ('ask','summary')", name="ck_model_call_kind"),
+        CheckConstraint("kind in ('ask','summary','translate')", name="ck_model_call_kind"),
         CheckConstraint("status in ('started','succeeded','failed')", name="ck_model_call_status"),
         Index("ix_model_calls_user_created", "user_id", "created_at"),
     )

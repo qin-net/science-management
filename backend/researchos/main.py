@@ -19,6 +19,7 @@ from researchos.api import (
     papers,
     projects,
     tasks,
+    translations,
     workspaces,
 )
 from researchos.config import get_settings
@@ -82,6 +83,7 @@ def create_app() -> FastAPI:
         tasks,
         overview,
         ask,
+        translations,
     ):
         app.include_router(module.router, prefix="/api/v1", dependencies=[Depends(csrf_guard)])
     app.include_router(health.router)

@@ -21,6 +21,7 @@ from researchos.jobs import PARSE_KIND, enqueue_parse
 from researchos.literature.ids import normalize_arxiv_id, normalize_doi
 from researchos.models import (
     ACTIVE_JOB_STATUSES,
+    BlockTranslation,
     Job,
     Note,
     Paper,
@@ -494,6 +495,7 @@ def delete_paper(
     note_count = len(
         list(db.scalars(delete(Note).where(Note.paper_id == paper.id).returning(Note.id)))
     )
+    db.execute(delete(BlockTranslation).where(BlockTranslation.paper_id == paper.id))
     db.execute(delete(PaperBlock).where(PaperBlock.paper_version_id.in_(version_ids)))
     paper.current_version_id = None
     db.execute(

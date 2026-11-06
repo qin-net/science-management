@@ -126,6 +126,10 @@ def apply_model_mode(model: FakeModel, mode: str) -> None:
         model.default = ModelReply(500, {"type": "error"})
     elif mode == "busy":
         model.default = ModelReply(529, {"type": "error"})
+    elif mode in ("translate", "translate_hostile"):
+        # Every request in the browser tests translates one block, so block 1 is the only one.
+        words = f"{HOSTILE}译文" if mode == "translate_hostile" else "标记文本（译文）"
+        model.default = message_reply(text=json.dumps({"translations": [{"n": 1, "text": words}]}))
     else:
         raise ValueError(f"unknown model mode {mode}")
 
@@ -289,6 +293,10 @@ def main(argv: list[str]) -> int:
         # The language model is a local stand-in too; no question leaves the machine.
         "ANTHROPIC_API_KEY": "e2e-key-not-a-secret",
         "ANTHROPIC_BASE_URL": model.url,
+        # Pinned so a developer's own model settings in .env cannot change the run.
+        "MODEL_NAME": "claude-sonnet-5-5",
+        "MODEL_MAX_OUTPUT_TOKENS": "4096",
+        "MODEL_CONTEXT_CHARS": "120000",
         "MODEL_USER_PER_MINUTE": "1000",
         "MODEL_USER_PER_DAY": "1000",
         "MODEL_TIMEOUT_SECONDS": "10",

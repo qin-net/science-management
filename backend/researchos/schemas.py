@@ -581,3 +581,26 @@ class AskOut(BaseModel):
 
 class SummaryRequest(Strict):
     language: Literal["zh", "en"] = "zh"
+
+
+class TranslateRequest(Strict):
+    block_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
+    language: Literal["zh", "en"] = "zh"
+
+
+class TranslationOut(BaseModel):
+    block_id: uuid.UUID
+    text: str
+    model: str
+    created_at: datetime
+
+
+class TranslationsOut(BaseModel):
+    """`remaining`: asked for but not sent this time; `missing`: sent, but no usable translation
+    came back (specs/012 3.2). `model` and `usage` are null when no call was made."""
+
+    items: list[TranslationOut]
+    remaining: list[uuid.UUID]
+    missing: list[uuid.UUID]
+    model: str | None
+    usage: AskUsageOut | None

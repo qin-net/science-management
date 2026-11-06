@@ -334,3 +334,13 @@ export type Answer = {
   model: string;
   usage: { input_tokens: number | null; output_tokens: number | null };
 };
+
+export type Translation = { block_id: string; text: string; model: string; created_at: string };
+
+export type TranslationsResult = {
+  items: Translation[];
+  remaining: string[];
+  missing: string[];
+  model: string | null;
+  usage: { input_tokens: number | null; output_tokens: number | null } | null;
+};

@@ -6,6 +6,7 @@ import { type ChangeEvent, type FormEvent, useEffect, useMemo, useState } from "
 import { Notes } from "@/components/Notes";
 import { PdfView } from "@/components/PdfView";
 import { SummaryPanel } from "@/components/SummaryPanel";
+import { type TranslationLanguage, TranslationPanel } from "@/components/TranslationPanel";
 import {
   ErrorNotice,
   formatBytes,
@@ -24,10 +25,11 @@ import type {
   NotesPage,
   Paper,
   Project,
+  TranslationsResult,
   Version,
   Workspace,
 } from "@/lib/types";
-import { useResource } from "@/lib/useResource";
+import { type Resource, useResource } from "@/lib/useResource";
 
 const BLOCK_PAGE_SIZE = 2000;
 
@@ -106,12 +108,14 @@ function BlockList({
   blocks,
   selected,
   annotations,
+  translations,
   onSelect,
   onRange,
 }: {
   blocks: Block[];
   selected: Block | null;
   annotations: { blockId: string; start: number; end: number }[];
+  translations: Map<string, string>;
   onSelect: (block: Block) => void;
   onRange: (selection: BlockSelection | null) => void;
 }) {
@@ -130,42 +134,51 @@ function BlockList({
           <div className="block-page-label">第 {page} 页</div>
           {items.map((block) =>
             block.text ? (
-              <div
-                key={block.id}
-                role="button"
-                tabIndex={0}
-                data-testid="block"
-                data-page={block.page_no}
-                data-located={block.bbox !== null}
-                data-block-id={block.id}
-                className={`block ${selected?.id === block.id ? "selected" : ""}`}
-                onClick={() => onSelect(block)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    onSelect(block);
-                  }
-                }}
-                onMouseUp={() => {
-                  const selection = window.getSelection();
-                  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-                    onRange(null);
-                    return;
-                  }
-                  const offsets = offsetsIn(block, selection.getRangeAt(0));
-                  onRange(offsets ? { block, start: offsets[0], end: offsets[1] } : null);
-                }}
-              >
-                {marked(
-                  block,
-                  annotations.filter((item) => item.blockId === block.id),
-                ).map((part, index) =>
-                  part.marked ? (
-                    <mark key={index} data-testid="block-mark">
-                      {part.text}
-                    </mark>
-                  ) : (
-                    <span key={index}>{part.text}</span>
-                  ),
+              <div key={block.id}>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  data-testid="block"
+                  data-page={block.page_no}
+                  data-located={block.bbox !== null}
+                  data-block-id={block.id}
+                  className={`block ${selected?.id === block.id ? "selected" : ""}`}
+                  onClick={() => onSelect(block)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      onSelect(block);
+                    }
+                  }}
+                  onMouseUp={() => {
+                    const selection = window.getSelection();
+                    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+                      onRange(null);
+                      return;
+                    }
+                    const offsets = offsetsIn(block, selection.getRangeAt(0));
+                    onRange(offsets ? { block, start: offsets[0], end: offsets[1] } : null);
+                  }}
+                >
+                  {marked(
+                    block,
+                    annotations.filter((item) => item.blockId === block.id),
+                  ).map((part, index) =>
+                    part.marked ? (
+                      <mark key={index} data-testid="block-mark">
+                        {part.text}
+                      </mark>
+                    ) : (
+                      <span key={index}>{part.text}</span>
+                    ),
+                  )}
+                </div>
+                {/* Beside the block, never inside it: the block's text must stay exactly the
+                    source text, so selection offsets match what the server checks. */}
+                {translations.has(block.id) && (
+                  <div className="block-translation" data-testid="block-translation">
+                    <span className="block-translation-label">机器翻译</span>
+                    {translations.get(block.id)}
+                  </div>
                 )}
               </div>
             ) : (
@@ -181,7 +194,8 @@ function BlockList({
 }
 
 function Blocks({
-  base,
+  blocks,
+  translations,
   paper,
   version,
   selected,
@@ -190,7 +204,8 @@ function Blocks({
   onSelect,
   onRange,
 }: {
-  base: string;
+  blocks: Resource<BlocksPage>;
+  translations: Map<string, string>;
   paper: Paper;
   version: Version;
   selected: Block | null;
@@ -215,15 +230,12 @@ function Blocks({
     }
     return [{ blockId: anchor.block_id, start: anchor.range[0], end: anchor.range[1] }];
   });
-  const blocks = useResource(
-    () => loadAllBlocks(`${base}/versions/${version.id}`),
-    `${version.id}:${version.current_parse_job_id}`,
-  );
 
-  // A link from an answer (?block=) opens the reader with that block already picked.
+  // A link from an answer (?block=) opens the reader with that block already picked. Waits for a
+  // parsed list: the first render can still hold the empty one from before the version loaded.
   const [focused, setFocused] = useState<string | null>(null);
   useEffect(() => {
-    if (!focusId || focused === focusId || !blocks.data) {
+    if (!focusId || focused === focusId || !blocks.data?.parsed) {
       return;
     }
     const target = blocks.data.items.find((item) => item.id === focusId);
@@ -259,6 +271,7 @@ function Blocks({
         blocks={blocks.data?.items ?? []}
         selected={selected}
         annotations={annotations}
+        translations={translations}
         onSelect={onSelect}
         onRange={onRange}
       />
@@ -526,6 +539,28 @@ export default function ReaderPage() {
   const current = paper.data?.current_version ?? null;
   const version = chosenVersion && chosenVersion.id !== current?.id ? chosenVersion : current;
   const job = paper.data?.parse_job ?? null;
+  const parseKey = `${version?.id}:${version?.current_parse_job_id}`;
+  const blocks = useResource(
+    () =>
+      version
+        ? loadAllBlocks(`${base}/versions/${version.id}`)
+        : Promise.resolve({ items: [], total: 0, offset: 0, limit: 0, parsed: false }),
+    parseKey,
+  );
+  const [language, setLanguage] = useState<TranslationLanguage>("zh");
+  const translations = useResource(
+    () =>
+      version
+        ? api<TranslationsResult>(
+            `${base}/versions/${version.id}/translations?language=${language}`,
+          )
+        : Promise.resolve(null),
+    `${parseKey}:${language}`,
+  );
+  const translated = useMemo(
+    () => new Map((translations.data?.items ?? []).map((item) => [item.block_id, item.text])),
+    [translations.data],
+  );
 
   function pick(block: Block) {
     setSelected(block);
@@ -617,7 +652,8 @@ export default function ReaderPage() {
         <div className="reader">
           <aside className="reader-pane left">
             <Blocks
-              base={base}
+              blocks={blocks}
+              translations={translated}
               paper={paper.data}
               version={version}
               selected={selected}
@@ -675,6 +711,18 @@ export default function ReaderPage() {
               disabled={readOnly}
               onSaved={paper.reload}
             />
+            {blocks.data?.parsed && (
+              <TranslationPanel
+                base={`${base}/versions/${version.id}`}
+                page={page}
+                blocks={blocks.data.items}
+                translated={new Set(translated.keys())}
+                language={language}
+                canTranslate={role === "member" || role === "admin" || role === "owner"}
+                onLanguage={setLanguage}
+                onTranslated={translations.reload}
+              />
+            )}
             <SummaryPanel
               projectId={projectId}
               paperId={paperId}

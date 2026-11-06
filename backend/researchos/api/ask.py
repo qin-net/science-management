@@ -107,7 +107,9 @@ def _build_prompt(sources: list[Source], question: str) -> str:
     return "\n".join(lines)
 
 
-def _present(result: model.ModelResult, sources: dict[int, Source], unavailable: list) -> AskOut:
+def _present(
+    result: model.ModelResult[model.RawAnswer], sources: dict[int, Source], unavailable: list
+) -> AskOut:
     segments: list[AnswerSegmentOut] = []
     dropped = 0
     if result.answer.answerable:
